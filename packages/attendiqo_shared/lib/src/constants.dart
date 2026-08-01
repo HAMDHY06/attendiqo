@@ -1,12 +1,19 @@
 abstract final class FirestoreCollections {
   static const users = 'users';
   static const institutes = 'institutes';
+  static const instituteCodes = 'institute_codes';
+  static const teacherEmployeeNumbers = 'teacher_employee_numbers';
   static const instituteMembers = 'institute_members';
   static const classes = 'classes';
+  static const classCodes = 'class_codes';
+  static const classScheduleChanges = 'class_schedule_changes';
   static const students = 'students';
+  static const studentNumbers = 'student_numbers';
   static const classStudents = 'class_students';
   static const attendanceSessions = 'attendance_sessions';
   static const attendanceRecords = 'attendance_records';
+  static const attendanceCorrections = 'attendance_corrections';
+  static const qrTokens = 'qr_tokens';
   static const parentStudentLinks = 'parent_student_links';
   static const notificationTokens = 'notification_tokens';
   static const notifications = 'notifications';

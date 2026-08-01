@@ -1,5 +1,6 @@
 import 'contracts.dart';
 import 'models.dart';
+import 'attendance_phase.dart';
 
 class DuplicateScanGuard {
   DuplicateScanGuard({this.cooldown = const Duration(seconds: 3)});

@@ -7,6 +7,7 @@ class FakeAuthenticationRepository implements AuthenticationRepository {
   final controller = StreamController<AuthenticatedUser?>.broadcast();
   final profiles = <String, UserProfile>{};
   AuthFailure? signInFailure;
+  AuthFailure? resetFailure;
   bool signedOut = false;
   bool resetRequested = false;
   bool passwordUpdated = false;
@@ -31,8 +32,11 @@ class FakeAuthenticationRepository implements AuthenticationRepository {
   }
 
   @override
-  Future<void> sendPasswordResetEmail(String email) async =>
-      resetRequested = true;
+  Future<void> sendPasswordResetEmail(String email) async {
+    if (resetFailure case final failure?) throw failure;
+    resetRequested = true;
+  }
+
   @override
   Future<AuthenticatedUser> signIn({
     required String email,
@@ -238,6 +242,29 @@ void main() {
     controller.dispose();
     await repository.dispose();
   });
+
+  test(
+    'password recovery does not reveal an unrelated missing account',
+    () async {
+      final repository = FakeAuthenticationRepository()
+        ..resetFailure = const AuthFailure(
+          AuthFailureCode.userNotFound,
+          'No account was found for this email.',
+        );
+      final controller = AuthenticationController(
+        repository: repository,
+        audience: AppAudience.management,
+      );
+
+      expect(
+        await controller.requestPasswordReset('unknown@example.com'),
+        isTrue,
+      );
+      expect(controller.state.message, isNull);
+      controller.dispose();
+      await repository.dispose();
+    },
+  );
 
   test(
     'temporary account changes password before clearing force flag',

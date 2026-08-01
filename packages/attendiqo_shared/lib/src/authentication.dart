@@ -165,6 +165,7 @@ class AuthenticationController extends ChangeNotifier {
       await repository.sendPasswordResetEmail(email.trim());
       return true;
     } on AuthFailure catch (failure) {
+      if (failure.code == AuthFailureCode.userNotFound) return true;
       _setFailure(failure.userMessage);
       return false;
     } catch (_) {

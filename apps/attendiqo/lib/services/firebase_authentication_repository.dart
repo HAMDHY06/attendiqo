@@ -86,7 +86,17 @@ class FirebaseAuthenticationRepository implements AuthenticationRepository {
             : entry.value;
       }
       normalized['uid'] = uid;
-      return UserProfile.tryFromMap(normalized);
+      final profile = UserProfile.tryFromMap(normalized);
+      if (profile?.role == UserRole.superAdmin) {
+        final token = await _auth.currentUser?.getIdTokenResult();
+        if (token?.claims?['superAdmin'] != true) {
+          throw const AuthFailure(
+            AuthFailureCode.permissionDenied,
+            'This Super Admin session could not be verified.',
+          );
+        }
+      }
+      return profile;
     } on FirebaseException catch (error) {
       if (error.code == 'permission-denied') {
         throw const AuthFailure(
@@ -125,9 +135,41 @@ class FirebaseAuthenticationRepository implements AuthenticationRepository {
   @override
   Future<void> clearMustChangePassword(String uid) async {
     try {
-      await _firestore.collection(FirestoreCollections.users).doc(uid).update({
-        'mustChangePassword': false,
-        'updatedAt': FieldValue.serverTimestamp(),
+      final profileReference = _firestore
+          .collection(FirestoreCollections.users)
+          .doc(uid);
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(profileReference);
+        final profile = snapshot.data();
+        if (profile == null) {
+          throw const AuthFailure(
+            AuthFailureCode.missingProfile,
+            'Your user profile could not be found.',
+          );
+        }
+        final isTeacher = profile['role'] == UserRole.teacher.name;
+        transaction.update(profileReference, {
+          'mustChangePassword': false,
+          if (isTeacher) 'status': TeacherStatus.active.name,
+          if (isTeacher) 'updatedBy': uid,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        if (isTeacher) {
+          final auditReference = _firestore
+              .collection(FirestoreCollections.auditLogs)
+              .doc();
+          transaction.set(auditReference, {
+            'auditLogId': auditReference.id,
+            'actorUid': uid,
+            'actorRole': UserRole.teacher.name,
+            'instituteId': profile['instituteId'],
+            'action': AuditAction.teacherFirstLoginCompleted.name,
+            'targetType': AuditTargetType.teacher.name,
+            'targetId': uid,
+            'summary': 'Teacher completed required first-login password change',
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
       });
     } on FirebaseException catch (error) {
       if (error.code == 'permission-denied') {

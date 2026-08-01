@@ -1,5 +1,147 @@
 import 'enums.dart';
 
+class TeacherPermissions {
+  const TeacherPermissions({
+    this.canCreateClasses = false,
+    this.canEditClasses = false,
+    this.canAddStudents = true,
+    this.canEditStudents = true,
+    this.canGenerateQrCodes = true,
+    this.canTakeAttendance = true,
+    this.canCorrectAttendance = false,
+    this.canExportReports = true,
+    this.canViewParentContacts = true,
+    this.canSendManualNotifications = false,
+  });
+
+  static const fullAccess = TeacherPermissions(
+    canCreateClasses: true,
+    canEditClasses: true,
+    canAddStudents: true,
+    canEditStudents: true,
+    canGenerateQrCodes: true,
+    canTakeAttendance: true,
+    canCorrectAttendance: true,
+    canExportReports: true,
+    canViewParentContacts: true,
+    canSendManualNotifications: true,
+  );
+
+  static const attendanceAccess = TeacherPermissions(
+    canAddStudents: false,
+    canEditStudents: false,
+    canGenerateQrCodes: false,
+    canTakeAttendance: true,
+    canExportReports: true,
+    canViewParentContacts: false,
+  );
+
+  static const noAccess = TeacherPermissions(
+    canAddStudents: false,
+    canEditStudents: false,
+    canGenerateQrCodes: false,
+    canTakeAttendance: false,
+    canExportReports: false,
+    canViewParentContacts: false,
+  );
+
+  final bool canCreateClasses;
+  final bool canEditClasses;
+  final bool canAddStudents;
+  final bool canEditStudents;
+  final bool canGenerateQrCodes;
+  final bool canTakeAttendance;
+  final bool canCorrectAttendance;
+  final bool canExportReports;
+  final bool canViewParentContacts;
+  final bool canSendManualNotifications;
+
+  bool allows(TeacherPermission permission) => switch (permission) {
+    TeacherPermission.canCreateClasses => canCreateClasses,
+    TeacherPermission.canEditClasses => canEditClasses,
+    TeacherPermission.canAddStudents => canAddStudents,
+    TeacherPermission.canEditStudents => canEditStudents,
+    TeacherPermission.canGenerateQrCodes => canGenerateQrCodes,
+    TeacherPermission.canTakeAttendance => canTakeAttendance,
+    TeacherPermission.canCorrectAttendance => canCorrectAttendance,
+    TeacherPermission.canExportReports => canExportReports,
+    TeacherPermission.canViewParentContacts => canViewParentContacts,
+    TeacherPermission.canSendManualNotifications => canSendManualNotifications,
+  };
+
+  TeacherPermissions copyWith({
+    bool? canCreateClasses,
+    bool? canEditClasses,
+    bool? canAddStudents,
+    bool? canEditStudents,
+    bool? canGenerateQrCodes,
+    bool? canTakeAttendance,
+    bool? canCorrectAttendance,
+    bool? canExportReports,
+    bool? canViewParentContacts,
+    bool? canSendManualNotifications,
+  }) => TeacherPermissions(
+    canCreateClasses: canCreateClasses ?? this.canCreateClasses,
+    canEditClasses: canEditClasses ?? this.canEditClasses,
+    canAddStudents: canAddStudents ?? this.canAddStudents,
+    canEditStudents: canEditStudents ?? this.canEditStudents,
+    canGenerateQrCodes: canGenerateQrCodes ?? this.canGenerateQrCodes,
+    canTakeAttendance: canTakeAttendance ?? this.canTakeAttendance,
+    canCorrectAttendance: canCorrectAttendance ?? this.canCorrectAttendance,
+    canExportReports: canExportReports ?? this.canExportReports,
+    canViewParentContacts: canViewParentContacts ?? this.canViewParentContacts,
+    canSendManualNotifications:
+        canSendManualNotifications ?? this.canSendManualNotifications,
+  );
+
+  Map<String, bool> toMap() => {
+    for (final permission in TeacherPermission.values)
+      permission.name: allows(permission),
+  };
+
+  Set<String> changedKeys(TeacherPermissions other) => {
+    for (final permission in TeacherPermission.values)
+      if (allows(permission) != other.allows(permission)) permission.name,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is TeacherPermissions && changedKeys(other).isEmpty;
+
+  @override
+  int get hashCode => Object.hashAll(
+    TeacherPermission.values.map((permission) => allows(permission)),
+  );
+
+  static TeacherPermissions? tryFromMap(Object? raw) {
+    if (raw is! Map) return null;
+    final values = <String, Object?>{
+      for (final entry in raw.entries)
+        if (entry.key is String) entry.key! as String: entry.value,
+    };
+    final expected = TeacherPermission.values
+        .map((value) => value.name)
+        .toSet();
+    if (values.keys.toSet().difference(expected).isNotEmpty ||
+        expected.difference(values.keys.toSet()).isNotEmpty ||
+        values.values.any((value) => value is! bool)) {
+      return null;
+    }
+    return TeacherPermissions(
+      canCreateClasses: values['canCreateClasses']! as bool,
+      canEditClasses: values['canEditClasses']! as bool,
+      canAddStudents: values['canAddStudents']! as bool,
+      canEditStudents: values['canEditStudents']! as bool,
+      canGenerateQrCodes: values['canGenerateQrCodes']! as bool,
+      canTakeAttendance: values['canTakeAttendance']! as bool,
+      canCorrectAttendance: values['canCorrectAttendance']! as bool,
+      canExportReports: values['canExportReports']! as bool,
+      canViewParentContacts: values['canViewParentContacts']! as bool,
+      canSendManualNotifications: values['canSendManualNotifications']! as bool,
+    );
+  }
+}
+
 class UserProfile {
   const UserProfile({
     required this.uid,
@@ -13,7 +155,44 @@ class UserProfile {
     required this.createdBy,
     required this.updatedAt,
     this.lastLoginAt,
+    this.updatedBy,
+    this.phoneNumber,
+    this.employeeNumber,
+    this.permissions,
+    this.teacherStatus,
   });
+
+  factory UserProfile.newTeacher({
+    required String uid,
+    required String email,
+    required String displayName,
+    required String instituteId,
+    required String createdBy,
+    required DateTime now,
+    String? phoneNumber,
+    String? employeeNumber,
+    TeacherPermissions permissions = const TeacherPermissions(),
+  }) => UserProfile(
+    uid: uid,
+    email: email.trim().toLowerCase(),
+    displayName: displayName.trim(),
+    role: UserRole.teacher,
+    instituteId: instituteId,
+    active: true,
+    mustChangePassword: true,
+    createdAt: now,
+    createdBy: createdBy,
+    updatedAt: now,
+    updatedBy: createdBy,
+    phoneNumber: phoneNumber?.trim().isEmpty == true
+        ? null
+        : phoneNumber?.trim(),
+    employeeNumber: employeeNumber?.trim().isEmpty == true
+        ? null
+        : employeeNumber?.trim().toUpperCase(),
+    permissions: permissions,
+    teacherStatus: TeacherStatus.pendingFirstLogin,
+  );
 
   final String uid;
   final String email;
@@ -26,6 +205,23 @@ class UserProfile {
   final String createdBy;
   final DateTime updatedAt;
   final DateTime? lastLoginAt;
+  final String? updatedBy;
+  final String? phoneNumber;
+  final String? employeeNumber;
+  final TeacherPermissions? permissions;
+  final TeacherStatus? teacherStatus;
+
+  bool get isTeacher => role == UserRole.teacher;
+  TeacherPermissions get effectiveTeacherPermissions =>
+      permissions ?? const TeacherPermissions();
+  TeacherStatus? get effectiveTeacherStatus => !isTeacher
+      ? null
+      : teacherStatus ??
+            (!active
+                ? TeacherStatus.disabled
+                : mustChangePassword
+                ? TeacherStatus.pendingFirstLogin
+                : TeacherStatus.active);
 
   bool get hasValidInstituteAssignment => switch (role) {
     UserRole.instituteAdmin ||
@@ -46,10 +242,59 @@ class UserProfile {
     'createdBy': createdBy,
     'updatedAt': updatedAt,
     'lastLoginAt': lastLoginAt,
+    if (isTeacher) ...{
+      'updatedBy': updatedBy ?? createdBy,
+      'phoneNumber': phoneNumber,
+      'employeeNumber': employeeNumber,
+      'permissions': effectiveTeacherPermissions.toMap(),
+      'status': effectiveTeacherStatus!.name,
+    },
   };
+
+  UserProfile copyWithTeacher({
+    String? displayName,
+    String? phoneNumber,
+    bool clearPhoneNumber = false,
+    String? employeeNumber,
+    bool clearEmployeeNumber = false,
+    bool? active,
+    bool? mustChangePassword,
+    TeacherPermissions? permissions,
+    TeacherStatus? teacherStatus,
+    DateTime? updatedAt,
+    String? updatedBy,
+    DateTime? lastLoginAt,
+  }) => UserProfile(
+    uid: uid,
+    email: email,
+    displayName: displayName ?? this.displayName,
+    role: role,
+    instituteId: instituteId,
+    active: active ?? this.active,
+    mustChangePassword: mustChangePassword ?? this.mustChangePassword,
+    createdAt: createdAt,
+    createdBy: createdBy,
+    updatedAt: updatedAt ?? this.updatedAt,
+    lastLoginAt: lastLoginAt ?? this.lastLoginAt,
+    updatedBy: updatedBy ?? this.updatedBy,
+    phoneNumber: clearPhoneNumber ? null : phoneNumber ?? this.phoneNumber,
+    employeeNumber: clearEmployeeNumber
+        ? null
+        : employeeNumber ?? this.employeeNumber,
+    permissions: permissions ?? this.permissions,
+    teacherStatus: teacherStatus ?? this.teacherStatus,
+  );
 
   static UserProfile? tryFromMap(Map<String, Object?> data) {
     final role = UserRoleSerialization.tryParse(data['role']);
+    final permissions = data['permissions'] == null
+        ? null
+        : TeacherPermissions.tryFromMap(data['permissions']);
+    final teacherStatus = data['status'] is String
+        ? TeacherStatus.values
+              .where((value) => value.name == data['status'])
+              .firstOrNull
+        : null;
     if (role == null ||
         data['uid'] is! String ||
         data['email'] is! String ||
@@ -60,7 +305,12 @@ class UserProfile {
         data['createdBy'] is! String ||
         data['updatedAt'] is! DateTime ||
         (data['instituteId'] != null && data['instituteId'] is! String) ||
-        (data['lastLoginAt'] != null && data['lastLoginAt'] is! DateTime)) {
+        (data['lastLoginAt'] != null && data['lastLoginAt'] is! DateTime) ||
+        (data['updatedBy'] != null && data['updatedBy'] is! String) ||
+        (data['phoneNumber'] != null && data['phoneNumber'] is! String) ||
+        (data['employeeNumber'] != null && data['employeeNumber'] is! String) ||
+        (data['permissions'] != null && permissions == null) ||
+        (data['status'] != null && teacherStatus == null)) {
       return null;
     }
     final profile = UserProfile(
@@ -75,102 +325,36 @@ class UserProfile {
       createdBy: data['createdBy']! as String,
       updatedAt: data['updatedAt']! as DateTime,
       lastLoginAt: data['lastLoginAt'] as DateTime?,
+      updatedBy: (data['updatedBy'] as String?) ?? data['createdBy']! as String,
+      phoneNumber: data['phoneNumber'] as String?,
+      employeeNumber: data['employeeNumber'] as String?,
+      permissions: role == UserRole.teacher
+          ? permissions ?? const TeacherPermissions()
+          : null,
+      teacherStatus: role == UserRole.teacher
+          ? teacherStatus ??
+                (!(data['active']! as bool)
+                    ? TeacherStatus.disabled
+                    : data['mustChangePassword']! as bool
+                    ? TeacherStatus.pendingFirstLogin
+                    : TeacherStatus.active)
+          : null,
     );
-    return profile.hasValidInstituteAssignment ? profile : null;
+    if (!profile.hasValidInstituteAssignment) return null;
+    if (role == UserRole.teacher) {
+      final expected = !profile.active
+          ? TeacherStatus.disabled
+          : profile.mustChangePassword
+          ? TeacherStatus.pendingFirstLogin
+          : TeacherStatus.active;
+      if (profile.email.trim().isEmpty ||
+          profile.displayName.trim().isEmpty ||
+          profile.effectiveTeacherStatus != expected) {
+        return null;
+      }
+    }
+    return profile;
   }
-}
-
-class Student {
-  const Student({
-    required this.studentId,
-    required this.instituteId,
-    required this.studentNumber,
-    required this.fullName,
-    required this.primaryParentName,
-    required this.primaryParentMobile,
-    this.secondaryParentName,
-    this.secondaryParentMobile,
-    this.parentEmail,
-    required this.status,
-    required this.qrToken,
-    required this.createdAt,
-    required this.createdBy,
-    required this.updatedAt,
-  });
-
-  final String studentId;
-  final String instituteId;
-  final String studentNumber;
-  final String fullName;
-  final String primaryParentName;
-  final String primaryParentMobile;
-  final String? secondaryParentName;
-  final String? secondaryParentMobile;
-  final String? parentEmail;
-  final StudentStatus status;
-  final String qrToken;
-  final DateTime createdAt;
-  final String createdBy;
-  final DateTime updatedAt;
-}
-
-class AttendanceSession {
-  const AttendanceSession({
-    required this.sessionId,
-    required this.instituteId,
-    required this.classId,
-    required this.teacherId,
-    required this.mode,
-    required this.startedAt,
-    this.endedAt,
-  });
-  final String sessionId;
-  final String instituteId;
-  final String classId;
-  final String teacherId;
-  final AttendanceEventType mode;
-  final DateTime startedAt;
-  final DateTime? endedAt;
-}
-
-class AttendanceRecord {
-  const AttendanceRecord({
-    required this.recordId,
-    required this.sessionId,
-    required this.instituteId,
-    required this.classId,
-    required this.studentId,
-    required this.status,
-    required this.recordedBy,
-    required this.deviceIdentifier,
-    this.entryAt,
-    this.departureAt,
-    this.correctedBy,
-    this.correctionReason,
-  });
-  final String recordId;
-  final String sessionId;
-  final String instituteId;
-  final String classId;
-  final String studentId;
-  final AttendanceStatus status;
-  final String recordedBy;
-  final String deviceIdentifier;
-  final DateTime? entryAt;
-  final DateTime? departureAt;
-  final String? correctedBy;
-  final String? correctionReason;
-}
-
-class QrToken {
-  const QrToken({
-    required this.opaqueToken,
-    required this.active,
-    required this.createdAt,
-  });
-  final String opaqueToken;
-  final bool active;
-  final DateTime createdAt;
 }
 
 class FcmToken {

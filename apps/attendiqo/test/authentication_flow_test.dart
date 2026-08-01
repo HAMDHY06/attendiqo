@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:attendiqo/app/attendiqo_app.dart';
+import 'package:attendiqo/features/authentication/presentation/authentication_screens.dart';
 import 'package:attendiqo/features/authentication/presentation/login_screen.dart';
 import 'package:attendiqo/theme/attendiqo_theme.dart';
 import 'package:attendiqo_shared/attendiqo_shared.dart';
@@ -8,12 +9,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class FakeRepository implements AuthenticationRepository {
-  FakeRepository({this.initialUser, this.profile});
+  FakeRepository({this.initialUser, this.profile, this.resetFailure});
   final AuthenticatedUser? initialUser;
   UserProfile? profile;
+  final AuthFailure? resetFailure;
   final changes = StreamController<AuthenticatedUser?>.broadcast();
   bool resetRequested = false;
+  Completer<void>? resetCompleter;
   bool signedOut = false;
+  bool passwordRequirementCleared = false;
 
   @override
   Stream<AuthenticatedUser?> authStateChanges() async* {
@@ -26,10 +30,25 @@ class FakeRepository implements AuthenticationRepository {
   @override
   Future<void> markLastLogin(String uid) async {}
   @override
-  Future<void> clearMustChangePassword(String uid) async {}
+  Future<void> clearMustChangePassword(String uid) async {
+    passwordRequirementCleared = true;
+    final current = profile;
+    if (current?.role == UserRole.teacher) {
+      profile = current!.copyWithTeacher(
+        mustChangePassword: false,
+        teacherStatus: TeacherStatus.active,
+        updatedBy: uid,
+      );
+    }
+  }
+
   @override
-  Future<void> sendPasswordResetEmail(String email) async =>
-      resetRequested = true;
+  Future<void> sendPasswordResetEmail(String email) async {
+    if (resetFailure case final failure?) throw failure;
+    resetRequested = true;
+    await resetCompleter?.future;
+  }
+
   @override
   Future<AuthenticatedUser> signIn({
     required String email,
@@ -82,6 +101,71 @@ void main() {
     await repository.dispose();
   });
 
+  testWidgets('forgot-password shows validation, loading, and safe success', (
+    tester,
+  ) async {
+    final repository = FakeRepository()..resetCompleter = Completer<void>();
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.management,
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: ForgotPasswordScreen(controller: controller)),
+    );
+    await tester.enterText(find.byType(TextFormField), 'invalid');
+    await tester.tap(find.text('Send reset email'));
+    await tester.pump();
+    expect(find.text('Enter a valid email address'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField), 'user@example.com');
+    await tester.tap(find.text('Send reset email'));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    repository.resetCompleter!.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'If an eligible account exists, password-reset instructions have been sent.',
+      ),
+      findsOneWidget,
+    );
+    controller.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('forgot-password maps network and disabled-account failures', (
+    tester,
+  ) async {
+    for (final failure in [
+      const AuthFailure(
+        AuthFailureCode.network,
+        'Network unavailable. Check your connection and try again.',
+      ),
+      const AuthFailure(
+        AuthFailureCode.userDisabled,
+        'This account has been disabled. Contact your administrator.',
+      ),
+    ]) {
+      final repository = FakeRepository(resetFailure: failure);
+      final controller = AuthenticationController(
+        repository: repository,
+        audience: AppAudience.management,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          key: ValueKey(failure.code),
+          home: ForgotPasswordScreen(controller: controller),
+        ),
+      );
+      await tester.enterText(find.byType(TextFormField), 'user@example.com');
+      await tester.tap(find.text('Send reset email'));
+      await tester.pumpAndSettle();
+      expect(find.text(failure.userMessage), findsOneWidget);
+      controller.dispose();
+      await repository.dispose();
+    }
+  });
+
   testWidgets('management roles route to their dashboards', (tester) async {
     for (final role in [
       UserRole.superAdmin,
@@ -96,7 +180,14 @@ void main() {
         profile: testProfile(role),
       );
       await tester.pumpWidget(
-        AttendiqoApp(key: ValueKey(role), authenticationRepository: repository),
+        AttendiqoApp(
+          key: ValueKey(role),
+          authenticationRepository: repository,
+          superAdminBuilder: (_) =>
+              const Scaffold(body: Text('Super Admin dashboard')),
+          instituteAdminBuilder: (_) =>
+              const Scaffold(body: Text('Institute Admin dashboard')),
+        ),
       );
       await tester.pumpAndSettle();
       final title = switch (role) {
@@ -156,6 +247,38 @@ void main() {
     await tester.pumpWidget(AttendiqoApp(authenticationRepository: repository));
     await tester.pumpAndSettle();
     expect(find.text('Create a new password'), findsOneWidget);
+    await repository.dispose();
+  });
+
+  testWidgets('teacher first login changes password and activates profile', (
+    tester,
+  ) async {
+    final pending = testProfile(
+      UserRole.teacher,
+      mustChangePassword: true,
+    ).copyWithTeacher(teacherStatus: TeacherStatus.pendingFirstLogin);
+    final repository = FakeRepository(
+      initialUser: const AuthenticatedUser(
+        uid: 'u1',
+        email: 'user@example.com',
+      ),
+      profile: pending,
+    );
+    await tester.pumpWidget(AttendiqoApp(authenticationRepository: repository));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('newPasswordField')),
+      'SecurePass2!',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Confirm new password'),
+      'SecurePass2!',
+    );
+    await tester.tap(find.text('Change password'));
+    await tester.pumpAndSettle();
+    expect(repository.passwordRequirementCleared, isTrue);
+    expect(repository.profile?.teacherStatus, TeacherStatus.active);
+    expect(find.text('Teacher dashboard'), findsWidgets);
     await repository.dispose();
   });
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:attendiqo_connect/app/connect_app.dart';
+import 'package:attendiqo_connect/features/authentication/presentation/connect_authentication_screens.dart';
 import 'package:attendiqo_connect/features/authentication/presentation/parent_login_screen.dart';
 import 'package:attendiqo_connect/theme/connect_theme.dart';
 import 'package:attendiqo_shared/attendiqo_shared.dart';
@@ -86,6 +87,31 @@ void main() {
     await repository.dispose();
   });
 
+  testWidgets('parent forgot-password sends a safe reset request', (
+    tester,
+  ) async {
+    final repository = FakeRepository();
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.connect,
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: ConnectForgotPasswordScreen(controller: controller)),
+    );
+    await tester.enterText(find.byType(TextFormField), 'parent@example.com');
+    await tester.tap(find.text('Send reset email'));
+    await tester.pumpAndSettle();
+    expect(repository.resetRequested, isTrue);
+    expect(
+      find.text(
+        'If an eligible account exists, password-reset instructions have been sent.',
+      ),
+      findsOneWidget,
+    );
+    controller.dispose();
+    await repository.dispose();
+  });
+
   testWidgets('parent routes to dashboard', (tester) async {
     final repository = FakeRepository(
       initialUser: const AuthenticatedUser(
@@ -118,7 +144,10 @@ void main() {
         profile: testProfile(role),
       );
       await tester.pumpWidget(
-        AttendiqoConnectApp(key: ValueKey(role), authenticationRepository: repository),
+        AttendiqoConnectApp(
+          key: ValueKey(role),
+          authenticationRepository: repository,
+        ),
       );
       await tester.pumpAndSettle();
       expect(

@@ -2,11 +2,15 @@ import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:flutter/material.dart';
 
 import '../features/authentication/presentation/authentication_screens.dart';
+import '../features/academic_management/presentation/academic_management_screens.dart';
 import '../features/foundation/presentation/foundation_screens.dart';
+import '../features/super_admin/presentation/super_admin_screens.dart';
+import '../features/teacher_management/presentation/teacher_management_screens.dart';
 
 abstract final class AppRoutes {
   static const forgotPassword = '/forgot-password';
   static const settings = '/settings';
+  static const academicManagement = '/academic-management';
 }
 
 abstract final class AppRouter {
@@ -21,6 +25,7 @@ abstract final class AppRouter {
         message:
             'Account settings beyond authentication remain planned for a later phase.',
       ),
+      AppRoutes.academicManagement => _academicScreen(controller),
       _ => const PlaceholderScreen(
         title: 'Not found',
         message: 'The requested screen does not exist.',
@@ -32,25 +37,45 @@ abstract final class AppRouter {
   static Widget screenForDestination(
     AuthDestination destination, {
     required AuthenticationController controller,
+    Widget Function(AuthenticationController controller)? superAdminBuilder,
+    Widget Function(AuthenticationController controller)? instituteAdminBuilder,
+    Widget Function(AuthenticationController controller)? teacherBuilder,
   }) => switch (destination) {
-    AuthDestination.superAdminDashboard => DashboardShell(
-      title: 'Super Admin dashboard',
-      description: 'Secure Super Admin session ready.',
-      controller: controller,
-    ),
-    AuthDestination.instituteAdminDashboard => DashboardShell(
-      title: 'Institute Admin dashboard',
-      description: 'Secure Institute Admin session ready.',
-      controller: controller,
-    ),
-    AuthDestination.teacherDashboard => DashboardShell(
-      title: 'Teacher dashboard',
-      description: 'Secure Teacher session ready.',
-      controller: controller,
-    ),
+    AuthDestination.superAdminDashboard =>
+      superAdminBuilder?.call(controller) ??
+          SuperAdminArea(authController: controller),
+    AuthDestination.instituteAdminDashboard =>
+      instituteAdminBuilder?.call(controller) ??
+          TeacherManagementArea(authController: controller),
+    AuthDestination.teacherDashboard =>
+      teacherBuilder?.call(controller) ??
+          DashboardShell(
+            title: 'Teacher dashboard',
+            description: 'Secure Teacher session ready.',
+            controller: controller,
+            showAcademicManagement: true,
+          ),
     _ => AccessBlockedScreen(
       message: 'This role is not supported by Attendiqo.',
       onSignOut: controller.signOut,
     ),
   };
+
+  static Widget _academicScreen(AuthenticationController controller) {
+    final profile = controller.state.profile;
+    if (controller.state.status != AuthenticationStatus.authenticated ||
+        profile == null ||
+        !profile.active ||
+        !const {
+          UserRole.superAdmin,
+          UserRole.instituteAdmin,
+          UserRole.teacher,
+        }.contains(profile.role)) {
+      return AccessBlockedScreen(
+        message: 'Your current session cannot open academic management.',
+        onSignOut: controller.signOut,
+      );
+    }
+    return AcademicManagementArea(authController: controller);
+  }
 }

@@ -21,11 +21,45 @@ extension UserRoleAuthorization on UserRole {
   bool get isParent => this == UserRole.parent;
 }
 
-enum StudentStatus { active, inactive, archived }
+enum StudentStatus { active, inactive, suspended, leftInstitute }
+
+enum AcademicClassStatus { active, inactive, archived }
+
+enum ScheduleChangeStatus { scheduled, cancelled, completed }
+
+enum ClassStudentAssignmentStatus { active, inactive, completed, removed }
+
+enum Gender { female, male, other, preferNotToSay }
 
 enum AttendanceStatus { present, absent, late, excused }
 
 enum AttendanceEventType { entry, departure }
+
+enum AttendanceSessionStatus { open, closed, cancelled }
+
+enum AttendanceScanMode { entry, departure }
+
+enum ScanMethod { qr, manual, correction }
+
+enum ScannerResultStatus {
+  accepted,
+  queued,
+  invalidQr,
+  disabledQr,
+  wrongInstitute,
+  wrongClass,
+  inactiveStudent,
+  closedSession,
+  duplicateEntry,
+  departureBeforeEntry,
+  duplicateDeparture,
+  cooldown,
+  networkError,
+  permissionDenied,
+  failure,
+}
+
+enum AttendanceSyncState { confirmed, queued, conflict }
 
 enum NotificationType { arrival, departure, late, general }
 
@@ -68,4 +102,103 @@ enum AuthFailureCode {
   requiresRecentLogin,
   resetFailed,
   unknown,
+}
+
+enum InstituteStatus { active, suspended, inactive }
+
+enum TeacherStatus { active, disabled, pendingFirstLogin }
+
+enum TeacherPermission {
+  canCreateClasses,
+  canEditClasses,
+  canAddStudents,
+  canEditStudents,
+  canGenerateQrCodes,
+  canTakeAttendance,
+  canCorrectAttendance,
+  canExportReports,
+  canViewParentContacts,
+  canSendManualNotifications,
+}
+
+enum AuditAction {
+  instituteCreated,
+  instituteUpdated,
+  instituteSuspended,
+  instituteActivated,
+  instituteAdminCreated,
+  instituteAdminDisabled,
+  smsSettingChanged,
+  pushSettingChanged,
+  passwordResetRequested,
+  teacherCreated,
+  teacherUpdated,
+  teacherDisabled,
+  teacherReactivated,
+  teacherPermissionsChanged,
+  teacherPasswordResetRequested,
+  teacherFirstLoginCompleted,
+  classCreated,
+  classUpdated,
+  classActivated,
+  classDeactivated,
+  classArchived,
+  classTeacherAssigned,
+  classTeacherRemoved,
+  classScheduleChanged,
+  classScheduleChangeCancelled,
+  studentCreated,
+  studentUpdated,
+  studentActivated,
+  studentDeactivated,
+  studentSuspended,
+  studentMarkedLeft,
+  studentAssignedToClass,
+  studentRemovedFromClass,
+  studentScheduleOverlapConfirmed,
+  studentNumberChanged,
+  classCodeChanged,
+  studentQrRegenerated,
+  studentQrDisabled,
+  studentQrEnabled,
+  attendanceSessionStarted,
+  attendanceSessionClosed,
+  attendanceSessionCancelled,
+  studentEntryRecorded,
+  studentDepartureRecorded,
+  manualAttendanceRecorded,
+  attendanceCorrected,
+  duplicateScanRejected,
+  invalidQrRejected,
+  qrRegenerated,
+  qrDisabled,
+  qrEnabled,
+  attendanceReportExported,
+}
+
+enum PasswordResetStatus {
+  idle,
+  loading,
+  success,
+  invalidEmail,
+  disabledAccount,
+  networkError,
+  unauthorized,
+  failure,
+}
+
+enum AuditTargetType {
+  institute,
+  user,
+  teacher,
+  academicClass,
+  scheduleChange,
+  student,
+  classStudentAssignment,
+  qrToken,
+  attendanceSession,
+  attendanceRecord,
+  attendanceReport,
+  smsSettings,
+  pushSettings,
 }

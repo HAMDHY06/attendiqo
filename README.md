@@ -68,7 +68,7 @@ Firebase initialization is prepared. The apps start in safe foundation mode if F
 - Use trusted backend custom claims for Super Admin.
 - Keep real `.env` files, service accounts, signing keys, and provider credentials outside Git.
 - `.env.example` contains names only. Store deployed secrets in Firebase/Google Cloud Secret Manager.
-- Firestore rules currently deny all client access. Replace them only with emulator-tested role and institute rules.
+- Firestore rules allow only the emulator-tested authentication, institute administration, and same-institute teacher-management paths; every unrelated collection remains denied.
 - Student photographs and Firebase Storage are intentionally absent.
 
 ## Notifications and SMS
@@ -83,23 +83,39 @@ Both apps listen to Firebase Authentication state, load `users/{uid}`, validate 
 
 The first Super Admin is never created in a mobile app. Review `scripts/README.md` and the one-time `scripts/provision_super_admin.mjs`; it requires external Application Default Credentials and explicit project confirmation and must not be run during ordinary development.
 
+## Password recovery
+
+Both applications retain Firebase Authentication email-based Forgot Password flows with non-enumerating confirmation text. Super Admins can request reset emails for Institute Admins, and Institute Admins can request reset emails only for Teachers in their own institute. Managed requests create append-only, non-sensitive audit entries. Existing passwords are never displayed or stored, accounts are not recreated when a temporary password is lost, and the `mustChangePassword` first-login flow is preserved. See `docs/password-recovery.md`.
+
+## Super Admin institute management
+
+The verified Super Admin area now provides institute dashboard statistics, search/filtering, lifecycle controls, notification/SMS availability settings, Institute Admin account preparation, and audit history. Institute codes are uppercase, immutable, and reserved transactionally through `institute_codes`. Client code cannot change SMS usage counters or create privileged user profiles.
+
+The Flutter app uses a local mock for Institute Admin provisioning. Production account creation must use a reviewed trusted backend; the secure Admin SDK reference and exact operator procedure are in `scripts/create_institute_admin.mjs` and `scripts/README.md`. See `docs/phase-3-institute-management.md` for the architecture and review-only deployment command.
+
+## Institute Admin teacher management
+
+Active Institute Admins now receive a responsive Teacher Management area scoped to their own institute. It supports teacher search/status filters, secure creation preparation, permitted edits, typed permissions, disable/reactivate actions, reset-email requests, first-login status, and teacher audit history. Verified Super Admins have cross-institute monitoring with an institute filter.
+
+Privileged creation is never performed with client Admin credentials. Debug builds use an isolated mock, release builds remain unavailable until backend deployment, and `scripts/create_teacher.mjs` provides a reviewed operator reference that emits a temporary password only once. See `docs/phase-4-teacher-management.md` and `scripts/README.md`.
+
 ## Continuous scanner architecture
 
-The shared package prepares attendance sessions, entry/departure events, statuses, corrections, device IDs, opaque QR contracts, and duplicate-scan cooldown. The future scanner stays open after each automatic valid scan. Camera access is intentionally not implemented in this foundation.
+The shared package and Attendiqo app now prepare academic management, secure opaque QR issuance, attendance sessions, entry/departure events, corrections, device IDs, continuous camera scanning, cooldown, CSV/PDF reports, and print-friendly QR cards. Debug builds use an in-memory trusted-service mock. Release QR and attendance operations remain unavailable until the reviewed backend is implemented; direct mobile writes to the sensitive collections are denied. See `docs/phase-5-6-academic-attendance.md`.
 
 ## Remaining manual Firebase steps
 
 1. Enable Email/Password in Firebase Authentication; do not enable phone authentication.
 2. Verify both Android apps and SHA fingerprints in project `attendiqo-system`.
-3. Run and test role/institute Firestore rules in the Emulator Suite before replacing deny-all rules.
-4. Add required composite indexes when real query designs are finalized.
+3. Review the Phase 5–6 Firestore rules and run the Emulator Suite before deployment.
+4. Review and deploy the academic/attendance composite indexes when the rules are approved.
 5. Provision the first Super Admin through a one-time, audited Admin SDK process using server-managed claims.
-6. Select a trusted backend for FCM and optional SMS, then configure secrets outside the apps.
+6. Implement and review callable QR/attendance services before enabling release attendance. Then select a trusted backend for FCM and optional SMS, with secrets outside the apps.
 7. Configure FCM notification permissions, token rotation, deep links, and Android notification channels.
 8. Review all policy drafts with qualified legal/privacy counsel before publication.
 
 ## Future stages
 
-Proceed one validated phase at a time: authentication and roles; institute management; teacher/class/student management; opaque QR generation; continuous scanning; attendance reports; secure parent linking; parent dashboard; FCM backend; optional SMS; hardened rules and deployment.
+Proceed one validated phase at a time: secure parent linking; parent dashboard/history; schedule notifications; FCM backend; optional SMS; hardened rules and deployment.
 
-Recommended next task: **Implement secure Firebase email/password authentication, user profiles, role definitions, and role-based routing for Attendiqo and Attendiqo Connect.**
+Recommended next task: **Implement Attendiqo Connect parent registration, secure student linking, multiple-child support, parent attendance dashboard, attendance history, and class-schedule notifications.**

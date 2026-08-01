@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../features/authentication/presentation/authentication_screens.dart';
 import '../features/authentication/presentation/login_screen.dart';
 import '../features/foundation/presentation/foundation_screens.dart';
+import '../features/academic_management/presentation/academic_management_screens.dart';
 import '../routing/app_router.dart';
 import '../services/firebase_authentication_repository.dart';
 import '../theme/attendiqo_theme.dart';
@@ -13,9 +14,14 @@ class AttendiqoApp extends StatefulWidget {
     super.key,
     this.firebaseReady = false,
     this.authenticationRepository,
+    this.superAdminBuilder,
+    this.instituteAdminBuilder,
   });
   final bool firebaseReady;
   final AuthenticationRepository? authenticationRepository;
+  final Widget Function(AuthenticationController controller)? superAdminBuilder;
+  final Widget Function(AuthenticationController controller)?
+  instituteAdminBuilder;
 
   @override
   State<AttendiqoApp> createState() => _AttendiqoAppState();
@@ -80,6 +86,11 @@ class _AttendiqoAppState extends State<AttendiqoApp> {
     AuthenticationStatus.authenticated => AppRouter.screenForDestination(
       state.destination!,
       controller: _controller,
+      superAdminBuilder: widget.superAdminBuilder,
+      instituteAdminBuilder: widget.instituteAdminBuilder,
+      teacherBuilder: widget.firebaseReady
+          ? (controller) => AcademicManagementArea(authController: controller)
+          : null,
     ),
   };
 }

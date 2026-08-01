@@ -1,5 +1,7 @@
 import 'enums.dart';
 import 'models.dart';
+import 'academic.dart';
+import 'attendance_phase.dart';
 
 abstract interface class StudentRepository {
   Future<Student?> findByQrToken(String opaqueToken);

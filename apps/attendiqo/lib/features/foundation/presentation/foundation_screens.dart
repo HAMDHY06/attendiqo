@@ -70,10 +70,12 @@ class DashboardShell extends StatelessWidget {
     required this.title,
     required this.description,
     required this.controller,
+    this.showAcademicManagement = false,
   });
   final String title;
   final String description;
   final AuthenticationController controller;
+  final bool showAcademicManagement;
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
@@ -115,15 +117,33 @@ class DashboardShell extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.lock_rounded, color: AttendiqoTheme.accent),
-            title: Text('Phase 2 authentication active'),
-            subtitle: Text(
-              'Additional management features remain intentionally unavailable.',
+        if (showAcademicManagement)
+          Card(
+            child: ListTile(
+              key: const Key('teacherAcademicManagement'),
+              leading: const Icon(
+                Icons.school_outlined,
+                color: AttendiqoTheme.accent,
+              ),
+              title: const Text('Classes & students'),
+              subtitle: const Text(
+                'Open assigned classes and permitted academic actions.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  Navigator.pushNamed(context, AppRoutes.academicManagement),
+            ),
+          )
+        else
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.lock_rounded, color: AttendiqoTheme.accent),
+              title: Text('Phase 2 authentication active'),
+              subtitle: Text(
+                'Additional management features remain intentionally unavailable.',
+              ),
             ),
           ),
-        ),
       ],
     ),
   );
