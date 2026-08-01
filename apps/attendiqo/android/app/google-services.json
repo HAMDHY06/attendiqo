@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "686779989392",
+    "project_id": "attendiqo-system",
+    "storage_bucket": "attendiqo-system.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:686779989392:android:57b36cfc6a1ae751490715",
+        "android_client_info": {
+          "package_name": "com.hamdhytech.attendiqo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCjJc9mUgoKHEQ4QRXzWEYYjjdMJhHgbo4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

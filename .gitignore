@@ -1,0 +1,44 @@
+# Dart / Flutter
+.dart_tool/
+.flutter-plugins*
+.packages
+build/
+**/build/
+coverage/
+node_modules/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Secrets and signing material
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.key
+*.pem
+*.p12
+service-account*.json
+**/serviceAccount*.json
+**/generated_secret_config.*
+android/key.properties
+
+# Local tools and emulators
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*.log
+tmp/
+
+# Android machine-specific file
+local.properties
+
+# google-services.json is Firebase client configuration, not an Admin SDK key.
+# This project keeps the supplied files in a controlled repository. Teams that
+# require private distribution can untrack and provide them through CI instead.

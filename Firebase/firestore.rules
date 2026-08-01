@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function hasVerifiedSuperAdminClaim() {
+      return signedIn() && request.auth.token.superAdmin == true;
+    }
+
+    function callerProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveInstituteAdmin() {
+      return signedIn()
+        && callerProfile().active == true
+        && callerProfile().role == 'instituteAdmin'
+        && callerProfile().instituteId is string;
+    }
+
+    function mayInstituteAdminRead(target) {
+      return isActiveInstituteAdmin()
+        && target.instituteId == callerProfile().instituteId
+        && target.role in ['instituteAdmin', 'teacher'];
+    }
+
+    function safeSelfUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['displayName', 'lastLoginAt', 'updatedAt', 'mustChangePassword'])
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.instituteId == resource.data.instituteId
+        && request.resource.data.active == resource.data.active
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && (
+          request.resource.data.mustChangePassword == resource.data.mustChangePassword
+          || (resource.data.mustChangePassword == true && request.resource.data.mustChangePassword == false)
+        );
+    }
+
+    match /users/{uid} {
+      // All authenticated users can load only their own profile for routing.
+      // Verified Super Admin claims can read profiles platform-wide.
+      // Active Institute Admins may read non-parent profiles in their institute.
+      allow get, list: if isSelf(uid)
+        || hasVerifiedSuperAdminClaim()
+        || mayInstituteAdminRead(resource.data);
+
+      // Client apps cannot create privileged profiles. Admin SDK provisioning
+      // bypasses rules in a trusted environment. Self-updates are limited to
+      // non-authorization fields and clearing a forced-password-change flag.
+      allow create, delete: if false;
+      allow update: if isSelf(uid) && safeSelfUpdate();
+    }
+
+    // Later phases must add and emulator-test collection-specific rules.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
