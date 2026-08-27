@@ -1,0 +1,205 @@
+Attendiqo implementation work log
+Updated: 2026-08-04
+
+SMS Spark Worker validation update: 2026-08-06
+- Added the undeployed `attendiqo-sms-api` Worker foundation using Firebase
+  ID-token verification, Rules-enforced profile/source reads, Worker-only
+  Text.lk secrets, parent-consent gate, Sri Lankan mobile normalization,
+  disabled-by-default settings, and Durable Object quota/de-duplication.
+- Added signed-JWT and mocked Text.lk integration coverage: Worker suite now
+  has 9 passing tests; no external endpoint or SMS was contacted.
+- Added minimal `student_sms_consents` Rules and tests. Rules Emulator now has
+  60 passing tests.
+- Revalidated Flutter: Shared 63, Attendiqo 52, Connect 22; all analyzers are
+  clean. No deployment or publishing occurred.
+- Attendance-triggered SMS remains unavailable and Institute Admin Firebase
+  account creation remains blocked pending a separately approved privileged
+  identity service.
+
+External validation attempt: read-only Firebase CLI inspection found one
+available project (`attendiqo-system`) and no staging project. Node 22, Admin
+credentials and Android device tooling are absent. No deploy, migration,
+reconciliation, App Check, FCM, SMS, monitoring or rollback command was run.
+
+Completed local work
+- Foundation through Phase 6: authentication, role routing, institute/teacher,
+  class/student, QR and attendance foundations.
+- Phase 7: parent-safe projections, restrictive Rules, Connect shell and
+  projection-backed foundation. External staging work remains deferred.
+- Phase 8: typed notification contracts, separate self-service callable
+  boundary, four review-only notification-device callable exports, deterministic
+  token hashing/identity, protected token storage, atomic token refresh,
+  callable-only Firestore device records, hashed rate-limit buckets, and safe
+  monitoring-event persistence; callable-only role-aware notification
+  preferences; and a review-only canonical notification outbox writer with
+  deterministic identities, server templates, sensitive-data rejection and
+  post-commit event hooks; plus a bounded review-only delivery worker with
+  dry-run support, retry classification and invalid-token cleanup; and Android
+  13 notification permission declarations in both apps; plus Firebase-free
+  safe notification-tap route parsing and local Firebase Messaging adapters
+  using only reviewed self-service callables for token lifecycle.
+  Notification lifecycle now starts only after a trusted authenticated session
+  and clears listeners on logout.
+
+Validated locally
+- Shared package tests: 63 passed; analyzer has no issues.
+- Attendiqo tests: 52 passed.
+- Attendiqo Connect tests: 22 passed.
+- Functions unit/package tests: 24 passed under local Node 24.
+- Functions Firestore-Emulator integration tests: 17 passed.
+- Firestore Rules Emulator: 58 passed.
+
+Still being completed locally
+- Mocked monitoring/logger proof that raw FCM tokens never appear in logs.
+- Physical Android FCM delivery, notification channel/icon validation and
+  staging App Check validation. The local Flutter lifecycle now handles
+  route-only foreground/opened/terminated events, session-gated shell routing,
+  permission request/settings and callable-only token lifecycle.
+
+External blockers (not completed or claimed)
+- Node 22 validation.
+- Android App Check staging validation.
+- Firebase staging deployment.
+- Real FCM device delivery validation.
+- SMS provider validation and physical-device testing.
+
+No Firebase Functions, application publishing, live FCM, live SMS, or Phase 9
+implementation beyond a local mock-only Phase 9 phone-validation/provider
+foundation and a review-only SMS outbox contract has been performed. On
+2026-08-09, the user explicitly approved a Firestore Rules-only release to
+attendiqo-system; Firebase reported the reviewed Ruleset was already current
+and released it. No Functions, indexes, or data were deployed.
+
+The concise project handoff is maintained in FINAL_LOCAL_COMPLETION_REPORT.txt.
+
+2026-08-09 — Institute membership approval foundation
+- Added locally tested shared contracts for visible institute join codes,
+  pending/active/rejected/suspended/revoked memberships, deterministic
+  membership IDs, and reviewer policy.
+- Added docs/institute-membership-approval-model.md. Join codes identify an
+  institute only; a future trusted approval action is required before access.
+- Legacy users/{uid}.role and instituteId remain unchanged pending a reviewed
+  migration and backend approval boundary.
+- Shared validation: flutter analyze passed; flutter test passed (66 tests).
+
+2026-08-09 — Trusted membership request boundary (review-only, undeployed)
+- Added callable-only institute join request and approval writers.
+- Join codes create only deterministic pending requests; no client Firestore
+  read or write is allowed for join codes, requests, or memberships.
+- Institute Admin requests require a verified Super Admin claim to approve.
+  Teacher and parent requests can be approved only by a same-institute active
+  Institute Admin or a verified Super Admin.
+- Added callable exports and package-boundary validation (3/3 passed).
+- Firestore Rules Emulator: 61/61 passed.
+- Added writer unit coverage for pending request creation, Super Admin-only
+  Institute Admin approval, and same-institute Teacher approval.
+- Functions local suite: 27/27 passed under Node 22.22.0.
+
+2026-08-09 â€” Active membership session migration foundation
+- Added active membership selection shared by both apps. It selects only an
+  active membership belonging to the authenticated user, is in-memory for the
+  current session, and gives an active Institute Admin the existing Teacher
+  capability set for that same institute without creating a second role.
+- Authentication policy now accepts an approved active membership while
+  retaining a clearly marked legacy profile bridge until trusted migration is
+  deployed. It never promotes pending, rejected, suspended, or revoked records.
+- Shared validation: flutter analyze passed; flutter test passed (69 tests).
+- Cloudflare Worker deployment is deliberately blocked: an end-user Firebase
+  ID token cannot bypass callable-only membership Rules. A least-privilege
+  server-to-server Firebase credential and rotation policy are required before
+  deployable Worker approval endpoints can exist safely.
+
+2026-08-09 â€” External decisions recorded
+2026-08-09 — Membership join/approval migration: FULLY GREEN locally
+- Worker membership request, status, reviewer, approval/rejection, and revoke endpoints are implemented locally; join codes create pending requests only.
+- Multi-institute session selection and Management/Connect join, status, and reviewer UI are complete. Same-institute active Institute Admin approval is limited to Teacher and Parent Connect; Super Admin approves Institute Admin.
+- Revoked/suspended memberships lose access on refresh. No direct mobile protected membership Firestore access exists.
+- Validation: Shared analyzer no issues / 78 tests; Attendiqo analyzer no issues / 59 tests; Connect analyzer no issues / 23 tests; Worker TypeScript passed / 3 files and 10 tests passed; git diff --check passed.
+
+- Cloudflare Worker deployment is approved only after the complete local
+  validation matrix is green. The dedicated `attendiqo-worker-backend` account
+  is confirmed for `attendiqo-system` and its credential remains a Worker
+  secret only.
+- <NEEDED_EXTERNAL_INPUT_APP_CHECK>: Android App Check configuration and
+  physical validation remain pending; this does not block local coding.
+- <NEEDED_EXTERNAL_INPUT_NOTIFICATION_ICON>: an approved monochrome Android
+  notification icon remains required before release-safe notification display.
+- <NEEDED_FINAL_LEGAL_APPROVAL>: provisional parent SMS wording is implemented
+  for local work; final legal review is still required before real use.
+
+2026-08-10 — Worker deployment and Android validation evidence
+- Deployed only the reviewed `attendiqo-sms-api` Cloudflare Worker. Firebase
+  Functions, Firebase Rules, Android publishing, data migration, and SMS
+  delivery were not deployed or performed in this pass.
+- Current deployed Worker version: `f6ab3dad-ed22-49d4-b333-aaf8a04e260c`.
+  The Worker includes a tested guard that rejects missing or malformed bearer
+  tokens before parsing its backend-only service-account secret.
+- Fresh local validation before deployment: Attendiqo Connect analyzer clean;
+  25 Connect tests passed; Firestore Rules Emulator 61/61 passed; changed Dart
+  files formatted; tracked-secret scan passed; `git diff --check` passed.
+  Worker TypeScript passed and the post-guard Worker suite passed 3 files / 12
+  tests.
+- Android evidence: an authorized Android 16 Infinix X6858 was detected. The
+  already-installed Attendiqo app launched and restored a signed-in Super
+  Admin dashboard. Notification UI explicitly reported unconfigured. No SMS,
+  membership approval, institute setting, or notification permission was
+  changed during device inspection.
+- Attendiqo Connect was subsequently built and installed as a debug package on
+  the Infinix. Its UI validation is blocked because the device is currently at
+  the lock screen/notification shade; no attempt was made to bypass the device
+  lock.
+- Authenticated deployed Worker checks remain pending. Credential-free endpoint
+  checks were safely rejected with 401 before the final deployment; a final
+  remote probe was blocked by the local network approval layer. No Firebase ID
+  token, phone number, service-account credential, or Worker secret was read,
+  logged, or returned.
+
+2026-08-10 — Follow-up authenticated device validation
+- The Infinix X6858 reconnected and was authorized. Both Attendiqo and
+  Attendiqo Connect are installed and launch successfully to their respective
+  login screens.
+- Neither app currently has a restored synthetic active session. Therefore no
+  Parent status, membership switching, approval/rejection, SMS settings/usage,
+  notification-settings interaction, or authenticated Worker endpoint was
+  exercised. No credentials, ID tokens, or device application data were read
+  or extracted.
+- <NEEDED_SYNTHETIC_TEST_ACCOUNT_STATE>: sign in on the device with synthetic
+  active Super Admin, Institute Admin, Teacher, Parent, revoked, suspended,
+  pending, and cross-institute test states, or otherwise make those sessions
+  available on-device without sharing credentials or tokens in chat.
+
+2026-08-10 - Read-only deployed Worker and device follow-up
+- The Infinix X6858 remained ADB-authorized. A signed-in synthetic Super
+  Admin session was observed in Attendiqo and restored to the dashboard. The
+  dashboard showed normal navigation and aggregate institute/SMS indicators.
+  Its read-only SMS settings/usage screen rendered a default monthly limit of
+  500 and backend-managed zero usage. No setting was saved and no SMS action
+  was selected. The notification affordance explicitly stated that it is not
+  configured.
+- The installed management build did not expose the current source's
+  membership-review action in its app bar, so reviewer visibility could not be
+  revalidated on-device without replacing the user-facing build. A safe
+  replacement launch was attempted, but another foreground application
+  retained device focus. That application was not force-stopped.
+- Attendiqo Connect could not be brought to the foreground for the Parent
+  session during this pass. No credentials, Firebase ID token, application
+  data, phone number, or secret was extracted.
+- Fresh deployed credential-free checks returned HTTP 401 for missing bearer
+  authentication and for an invalid bearer on `/v1/memberships/list`,
+  `/v1/usage`, and `/v1/settings`. Response bodies were deliberately
+  redacted. This confirms rejection before a settings mutation or SMS send;
+  it does not establish a live authenticated success path.
+- No request, review, revoke, settings save, Firebase deployment, real SMS,
+  or destructive remote change was performed.
+
+2026-08-10 - Device validation retry
+- The authorized Infinix was retried successfully. Attendiqo again restored
+  the signed-in synthetic Super Admin dashboard. The installed build still
+  lacks the reviewed membership-approval app-bar action, so that screen cannot
+  be validated from this package build.
+- Attendiqo Connect launched successfully but displayed an empty login form;
+  no Parent session was restored. The login form was not populated or
+  submitted.
+- A fresh anonymous deployed-worker probe of `/v1/memberships/list` returned
+  HTTP 401 with its response body redacted. No data mutation or sensitive-data
+  handling occurred.

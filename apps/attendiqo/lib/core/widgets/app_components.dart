@@ -130,40 +130,169 @@ class StatisticCard extends StatelessWidget {
   final Color? color;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 176,
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: (color ?? Theme.of(context).colorScheme.primary)
-                    .withValues(alpha: .1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(9),
-                child: Icon(
-                  icon,
-                  size: 21,
-                  color: color ?? Theme.of(context).colorScheme.primary,
-                ),
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: (color ?? Theme.of(context).colorScheme.primary)
+                  .withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(9),
+              child: Icon(
+                icon,
+                size: 21,
+                color: color ?? Theme.of(context).colorScheme.primary,
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              value,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 2),
-            Text(label, maxLines: 2, overflow: TextOverflow.ellipsis),
-          ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 2),
+          Text(label, maxLines: 2, overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    ),
+  );
+}
+
+/// A non-scrollable two-column grid for dashboard overview cards.
+class OverviewMetricGrid extends StatelessWidget {
+  const OverviewMetricGrid({
+    super.key,
+    required this.children,
+    this.childAspectRatio = 1,
+  });
+
+  final List<Widget> children;
+  final double childAspectRatio;
+
+  @override
+  Widget build(BuildContext context) => GridView.count(
+    crossAxisCount: 2,
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    crossAxisSpacing: 12,
+    mainAxisSpacing: 12,
+    childAspectRatio: childAspectRatio,
+    children: children,
+  );
+}
+
+class SectionHeader extends StatelessWidget {
+  const SectionHeader({
+    super.key,
+    required this.title,
+    this.actionLabel,
+    this.onAction,
+  });
+  final String title;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: Text(
+          title,
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
         ),
+      ),
+      if (actionLabel != null && onAction != null)
+        TextButton(onPressed: onAction, child: Text(actionLabel!)),
+    ],
+  );
+}
+
+class CurrentOrNextClassCard extends StatelessWidget {
+  const CurrentOrNextClassCard({
+    super.key,
+    this.title = 'Your next class',
+    this.message =
+        'Open My Classes to view your effective schedule and attendance actions.',
+  });
+  final String title;
+  final String message;
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.all(12),
+              child: Icon(Icons.schedule_rounded),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(message),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class ActionRequiredCard extends StatelessWidget {
+  const ActionRequiredCard({
+    super.key,
+    required this.title,
+    required this.message,
+  });
+  final String title;
+  final String message;
+  @override
+  Widget build(BuildContext context) => Card(
+    color: const Color(0xFFFFFBEB),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.priority_high_rounded, color: Color(0xFFF59E0B)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 3),
+                Text(message),
+              ],
+            ),
+          ),
+        ],
       ),
     ),
   );

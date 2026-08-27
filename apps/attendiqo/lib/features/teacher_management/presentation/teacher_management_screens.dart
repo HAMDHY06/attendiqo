@@ -185,9 +185,7 @@ class TeacherDashboardScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
+                    OverviewMetricGrid(
                       children: [
                         StatisticCard(
                           label: 'Total teachers',
@@ -288,9 +286,7 @@ class TeacherDashboardScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
+                  OverviewMetricGrid(
                     children: [
                       _MetricCard(
                         label: 'All teachers',
@@ -586,20 +582,17 @@ class _MetricCard extends StatelessWidget {
   final IconData icon;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 170,
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 10),
-            Text('$value', style: Theme.of(context).textTheme.headlineSmall),
-            Text(label),
-          ],
-        ),
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 10),
+          Text('$value', style: Theme.of(context).textTheme.headlineSmall),
+          Text(label),
+        ],
       ),
     ),
   );

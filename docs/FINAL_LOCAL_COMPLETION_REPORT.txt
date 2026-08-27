@@ -1,0 +1,192 @@
+Attendiqo local implementation handoff
+Updated: 2026-08-04
+
+## External-validation attempt (2026-08-04)
+
+No staging validation or deployment occurred. The reviewed Firebase CLI account
+was inspected read-only and has only `attendiqo-system`; no separate staging
+project is available. The workstation has Node `v24.18.0` only (no Node 22 or
+nvm), no `GOOGLE_APPLICATION_CREDENTIALS`, and no Android device tooling was
+available. Consequently App Check configuration, migration/reconciliation
+execution, callable staging checks, FCM/device checks, SMS sandbox checks,
+monitoring verification and a rollback drill remain unperformed. No Firebase
+commands that change remote state were run.
+
+Implemented locally
+- Main Attendiqo role-aware UI and academic-management stabilization foundations.
+- Attendiqo Connect parent-safe projection shell and restrictive parent Rules.
+- Phase 7 trusted projection/callable foundations (review-only and undeployed).
+- Phase 8 notification-device self-service boundary, callable-only device and
+  preference records, review-only outbox/event hooks/delivery worker, Android
+  POST_NOTIFICATIONS permission, safe route-only tap parser, and local
+  Firebase Messaging foreground/opened/terminated route adapters, permission
+  settings, session-gated shell routing and callable-only token lifecycle.
+- Phase 9 provider-neutral mock SMS validation, outbox and dry-run worker.
+
+Current local validation evidence
+- Shared Flutter: 63 tests; analyzer no issues.
+- Attendiqo: 52 tests; analyzer no issues.
+- Attendiqo Connect: 22 tests; analyzer no issues.
+- Functions unit/package: 24 tests passed under local Node 24.
+- Firestore Rules Emulator: 58 tests passed.
+- JavaScript syntax, secret scan and git diff --check: passed on the last
+  relevant runs.
+
+## SMS Worker validation update (2026-08-06)
+
+- Spark-compatible, undeployed Cloudflare Worker foundation added at
+  `attendiqo-sms-api`; it accepts only Firebase bearer tokens for
+  `attendiqo-system`, validates JWT signature/issuer/audience/expiry, derives
+  account role and Institute Admin scope from protected records, and keeps
+  Text.lk credentials as Worker-secret names only.
+- Worker local tests: 9 passed using signed local token fixtures plus mocked
+  Google JWKS, Firestore and Text.lk responses. No provider request occurred.
+- Firestore Rules Emulator: 60 passed.
+- Shared analyzer/tests: clean / 63 passed; Attendiqo: clean / 52 passed;
+  Connect: clean / 22 passed.
+- The Worker must still be human-deployed and one consented test delivery must
+  be approved before any delivery claim. Node 22, App Check staging and real
+  FCM validation remain external blockers.
+
+Security invariants retained
+- Client Firestore access to notification devices, preferences, outbox,
+  deliveries, SMS queues and backend state is denied.
+- FCM tokens and phones are never returned or logged by local contracts.
+- Parent raw source data, QR data, audits and cross-institute access remain
+  denied by Rules.
+- No deployment, publishing, FCM delivery, SMS provider delivery or fabricated
+  attendance result occurred.
+
+Remaining work/blockers
+- Node 22 test execution (host is Node 24).
+- Android App Check staging configuration and verification.
+- Firebase staging deployment, migration/reconciliation execution and rollback drill.
+- Real FCM device delivery and Android notification channel/icon validation.
+- SMS consent, provider selection, Secret Manager configuration, quotas and
+  real-provider/device validation are incomplete.
+- Production attendance source backend remains unavailable.
+
+Honest readiness
+- Attendiqo / Attendiqo Connect local foundations: partially complete.
+- Staging-ready: no.
+- Production-ready: no.
+
+## Membership join/approval migration — FULLY GREEN locally (2026-08-09)
+
+- Worker membership request, status, reviewer, approve/reject, and revoke operations are implemented locally behind Firebase-token verification and strict server allowlists.
+- Multi-institute approved active-membership selection is implemented in both apps; revoked/suspended memberships lose access after refresh.
+- Management and Connect join/status/reviewer UI is implemented. Super Admin approves Institute Admin requests; same-institute active Institute Admin approves Teacher and Parent Connect requests only.
+- No direct mobile Firestore membership access was introduced.
+- Final validation: Shared analyzer no issues / 78 tests; Attendiqo analyzer no issues / 59 tests; Connect analyzer no issues / 23 tests; Worker TypeScript passed / 3 files and 10 tests passed; git diff --check passed.
+
+## Membership migration update (2026-08-09)
+
+Implemented locally and tested:
+- Shared multi-institute contracts and strict status model (`pending`, `active`,
+  `rejected`, `suspended`, `revoked`).
+- Session-only active membership selection and explicit legacy compatibility
+  bridge; only active memberships of the authenticated user can be selected.
+- Institute Admin includes the Teacher capability set within the same active
+  institute without a duplicate membership or client-side escalation.
+- Authentication policy accepts an approved active membership and retains the
+  legacy `users/{uid}` assignment only while no membership record exists.
+- Shared analyzer: no issues. Shared tests: 69 passed.
+
+Blocked safely, not bypassed:
+- The deployed-style Cloudflare Worker currently uses an end-user Firebase ID
+  token. It cannot write or approve callable-only Firestore membership records
+  without a separately approved least-privilege server-to-server Firebase
+  credential. Allowing client Firestore writes merely to make the Worker work
+  would weaken the membership boundary and was not done.
+- Therefore join, approval, active-institute switching UI, migration/backfill,
+  and Worker membership endpoints are not represented as deployed features.
+
+No deployment, publishing, data migration, real FCM delivery, or real SMS
+delivery occurred in this update.
+
+## Approved external decisions
+
+- The Cloudflare Worker may be deployed only after the full local matrix is
+  green. No deployment has occurred in this report.
+- `attendiqo-system` is the approved target; its dedicated Worker service
+  account is constrained to that project and remains secret-only.
+- <NEEDED_EXTERNAL_INPUT_APP_CHECK>: Android App Check setup and validation.
+- <NEEDED_EXTERNAL_INPUT_NOTIFICATION_ICON>: approved monochrome Android icon.
+- <NEEDED_FINAL_LEGAL_APPROVAL>: final review of parent SMS consent wording.
+
+## Worker deployment and Android-device validation (2026-08-10)
+
+- **Cloudflare Worker deployed:** `attendiqo-sms-api`, version
+  `f6ab3dad-ed22-49d4-b333-aaf8a04e260c`. This was the only deployment. No
+  Firebase Functions, Firebase Rules, Android app, data migration, or SMS
+  delivery deployment occurred.
+- **Worker safety correction:** missing or malformed bearer tokens are now
+  rejected before any backend-only service-account secret is parsed. Worker
+  TypeScript passed; Worker tests passed: 3 files / 12 tests.
+- **Fresh local gates:** Connect analyzer no issues; Connect tests 25 passed;
+  Firestore Rules Emulator 61/61 passed; Dart formatting check passed;
+  tracked-file secret scan passed; `git diff --check` passed.
+- **Android evidence:** Infinix X6858 (Android 16) was visible and authorized.
+  The installed Attendiqo app launched and restored a signed-in Super Admin
+  dashboard. Its notification entry reported that notifications are not
+  configured. No mutable SMS, membership, approval, or permission action was
+  performed.
+- **Not validated:** Attendiqo Connect was subsequently built and installed as
+  a debug package, but its UI validation is blocked because the device is at
+  the lock screen/notification shade. The device lock was not bypassed.
+  Authenticated deployed Worker success/cross-institute/revoked checks require
+  a synthetic Firebase-authenticated account or ID token. The final anonymous
+  remote probe was blocked by the local network approval layer; no credential
+  or secret was exposed.
+
+## Follow-up authenticated device validation (2026-08-10)
+
+- The authorized Infinix X6858 was reconnected. Both Android packages launch
+  successfully to their login screens.
+- Neither app has a restored synthetic authenticated session. Consequently the
+  device could not exercise Parent membership states, active-institute
+  switching, reviewer restrictions, SMS settings/usage, notification-settings
+  interaction, or authenticated deployed Worker calls.
+- <NEEDED_SYNTHETIC_TEST_ACCOUNT_STATE>: establish synthetic on-device
+  sessions for active Super Admin, Institute Admin, Teacher, Parent, pending,
+  revoked, suspended, and cross-institute cases. Do not provide passwords,
+  Firebase ID tokens, or phone numbers in chat.
+
+## Read-only deployed Worker and device follow-up (2026-08-10)
+
+- **Super Admin device result:** Attendiqo restored a signed-in synthetic
+  Super Admin dashboard on the ADB-authorized Infinix X6858. Normal
+  navigation and the read-only SMS settings/usage UI were rendered. The UI
+  showed the default 500 monthly limit and trusted backend-managed zero usage;
+  no save or send action was taken. The notification UI correctly reported
+  that notifications are not configured.
+- **Parent/Connect device result:** Not completed. Another foreground app
+  retained the device focus when the installed app was safely launched. It was
+  not force-stopped, and no credentials or application data were accessed.
+- **Authenticated Worker result:** Authentication rejection was freshly
+  verified against the deployed Worker. Missing bearer authentication and an
+  invalid bearer each returned HTTP 401 for membership-list, usage, and
+  settings routes, with response content redacted. Positive authenticated
+  membership/usage checks were not run because obtaining or extracting an ID
+  token would violate the test boundary; mutation routes were deliberately
+  not invoked.
+- **No sensitive data exposure:** no Firebase ID token, phone number,
+  Firebase credential, service-account value, Text.lk secret, or Worker
+  secret was logged, returned, or committed. No real SMS was sent.
+- **Still required for full device coverage:**
+  <NEEDED_SYNTHETIC_TEST_ACCOUNT_STATE> needs an on-device active Parent
+  session and, for role/state coverage, synthetic Institute Admin, Teacher,
+  pending, suspended, revoked, and cross-institute states. The current
+  installed management build should also be refreshed to the reviewed build
+  containing the membership-review route before reviewer visibility can be
+  revalidated on-device.
+
+## Device validation retry (2026-08-10)
+
+- Attendiqo again restored the synthetic Super Admin session. The installed
+  package still does not show the reviewed membership-approval action, so this
+  is a package-version/device-validation limitation, not approval evidence.
+- Attendiqo Connect launched normally but has no restored Parent session; its
+  login fields were empty and were not populated or submitted.
+- A fresh anonymous call to the deployed membership-list route returned HTTP
+  401 with the response body redacted. No remote data was changed.

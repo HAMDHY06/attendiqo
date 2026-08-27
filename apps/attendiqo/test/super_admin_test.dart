@@ -36,6 +36,14 @@ class MemoryInstituteRepository implements InstituteRepository {
   Future<List<Institute>> fetchInstitutes() async => List.of(values);
 
   @override
+  Future<Institute?> fetchInstituteById(String instituteId) async {
+    for (final value in values) {
+      if (value.instituteId == instituteId) return value;
+    }
+    return null;
+  }
+
+  @override
   Future<void> updateInstitute(Institute institute) async {
     final index = values.indexWhere(
       (value) => value.instituteId == institute.instituteId,

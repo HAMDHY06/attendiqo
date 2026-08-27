@@ -52,6 +52,25 @@ The Flutter client calls the `TeacherProvisioningService` abstraction. Debug bui
 
 The script validates actor and institute state twice, normalizes the email and employee number, checks email and institute-scoped employee-number uniqueness, uses a cryptographically secure password generator, rolls back the Authentication user on Firestore failure, and excludes passwords from Firestore and audit logs.
 
+## Parent projection backend reference (Phase 7)
+
+`lib/parent_projection_validation.mjs` and
+`lib/parent_projection_writers.mjs` are compatibility wrappers. Validation is
+re-exported; the writer wrapper only injects the scripts package's Admin SDK
+`FieldValue`. The one canonical business implementation is packaged under
+`Firebase/functions/lib`, so operator utilities and Functions cannot drift
+while the deployment artifact remains self-contained.
+for parent links, safe student/class/attendance/notice projections, and public
+institute identity. `parent_projection_backend_reference.mjs` only re-exports
+them for review; it is not a deployable function or operator command.
+
+Before production, expose these operations only through reviewed callable
+functions that verify Firebase ID tokens, App Check, active profiles and
+institute scope, and apply rate limits and safe error mapping. Add source event
+triggers and scheduled reconciliation. Never make these collections writable
+from Flutter. The production attendance backend is still unavailable, so its
+projection writer is a tested contract only.
+
 ## Attendance backend reference (Phase 6)
 
 `attendance_backend_reference.mjs` is review-only transaction code, not an operator command and not a deployable Cloud Function export. Its pure helpers validate the `attendiqo://student/<opaque-token>` shape, hash the raw token, validate scan mode/device/session input, enforce Super Admin claims, institute isolation, assigned-teacher access, and `canTakeAttendance`, and generate session-specific record IDs.

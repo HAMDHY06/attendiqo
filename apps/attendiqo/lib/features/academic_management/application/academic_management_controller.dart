@@ -309,9 +309,28 @@ class AcademicManagementController extends ChangeNotifier {
     String? emergencyContactName,
     String? emergencyContactMobile,
   }) async {
+    if (saving) return null;
+    if (actor.uid.trim().isEmpty) {
+      error = 'Your account profile is unavailable. Please sign in again.';
+      notifyListeners();
+      return null;
+    }
     final instituteId = actor.instituteId;
-    if (instituteId == null) {
-      error = 'Select an institute before creating a student.';
+    if (instituteId == null || instituteId.trim().isEmpty) {
+      error = 'Your account is not assigned to an institute.';
+      notifyListeners();
+      return null;
+    }
+    final inputError =
+        StudentNumberValidator.validate(studentNumber) ??
+        FieldValidators.required(fullName, label: 'Full name') ??
+        FieldValidators.required(
+          primaryParentName,
+          label: 'Primary parent/guardian name',
+        ) ??
+        MobileNumberValidator.validatePrimary(primaryParentMobile);
+    if (inputError != null) {
+      error = inputError;
       notifyListeners();
       return null;
     }
@@ -324,57 +343,63 @@ class AcademicManagementController extends ChangeNotifier {
       notifyListeners();
       return null;
     }
-    final studentId = 'student-${DateTime.now().microsecondsSinceEpoch}';
-    final qr = qrService.generate(
-      studentId: studentId,
-      instituteId: instituteId,
-      version: 1,
-    );
-    final now = DateTime.now().toUtc();
-    final value = Student(
-      studentId: studentId,
-      instituteId: instituteId,
-      studentNumber: StudentNumberValidator.normalize(studentNumber),
-      fullName: fullName.trim(),
-      preferredName: preferredName?.trim().isEmpty == true
-          ? null
-          : preferredName?.trim(),
-      address: address.trim(),
-      primaryParentName: primaryParentName.trim(),
-      primaryParentMobile: MobileNumberValidator.normalize(primaryParentMobile),
-      secondaryParentName: secondaryParentName?.trim().isEmpty == true
-          ? null
-          : secondaryParentName?.trim(),
-      secondaryParentMobile: secondaryParentMobile?.trim().isEmpty == true
-          ? null
-          : MobileNumberValidator.normalize(secondaryParentMobile!),
-      parentEmail: parentEmail?.trim().isEmpty == true
-          ? null
-          : parentEmail?.trim().toLowerCase(),
-      emergencyContactName: emergencyContactName?.trim().isEmpty == true
-          ? null
-          : emergencyContactName?.trim(),
-      emergencyContactMobile: emergencyContactMobile?.trim().isEmpty == true
-          ? null
-          : MobileNumberValidator.normalize(emergencyContactMobile!),
-      status: StudentStatus.active,
-      active: true,
-      qrToken: qr.credential.tokenHash,
-      qrVersion: 1,
-      qrEnabled: true,
-      createdAt: now,
-      createdBy: actor.uid,
-      updatedAt: now,
-      updatedBy: actor.uid,
-    );
+    String? generatedQrPayload;
     return _save(
-      () => repository.createStudent(value, actor),
+      () async {
+        final studentId = 'student-${DateTime.now().microsecondsSinceEpoch}';
+        final qr = qrService.generate(
+          studentId: studentId,
+          instituteId: instituteId,
+          version: 1,
+        );
+        final now = DateTime.now().toUtc();
+        final value = Student(
+          studentId: studentId,
+          instituteId: instituteId,
+          studentNumber: StudentNumberValidator.normalize(studentNumber),
+          fullName: fullName.trim(),
+          preferredName: _optionalText(preferredName),
+          address: address.trim(),
+          primaryParentName: primaryParentName.trim(),
+          primaryParentMobile: MobileNumberValidator.normalize(
+            primaryParentMobile,
+          ),
+          secondaryParentName: _optionalText(secondaryParentName),
+          secondaryParentMobile: _optionalMobile(secondaryParentMobile),
+          parentEmail: _optionalText(parentEmail)?.toLowerCase(),
+          emergencyContactName: _optionalText(emergencyContactName),
+          emergencyContactMobile: _optionalMobile(emergencyContactMobile),
+          status: StudentStatus.active,
+          active: true,
+          qrToken: qr.credential.tokenHash,
+          qrVersion: 1,
+          qrEnabled: true,
+          createdAt: now,
+          createdBy: actor.uid,
+          updatedAt: now,
+          updatedBy: actor.uid,
+        );
+        generatedQrPayload = qr.payload;
+        return repository.createStudent(value, actor);
+      },
       onSuccess: (created) {
         students = [...students, created]
           ..sort((a, b) => a.fullName.compareTo(b.fullName));
-        lastCreatedQrPayload = qr.payload;
+        lastCreatedQrPayload = generatedQrPayload;
       },
     );
+  }
+
+  String? _optionalText(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  String? _optionalMobile(String? value) {
+    final normalized = _optionalText(value);
+    return normalized == null
+        ? null
+        : MobileNumberValidator.normalize(normalized);
   }
 
   Future<bool> updateStudent(Student value) async {

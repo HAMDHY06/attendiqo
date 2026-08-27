@@ -7,6 +7,7 @@ import '../features/foundation/presentation/foundation_screens.dart';
 import '../features/academic_management/presentation/academic_management_screens.dart';
 import '../routing/app_router.dart';
 import '../services/firebase_authentication_repository.dart';
+import '../services/firebase_notification_lifecycle.dart';
 import '../theme/attendiqo_theme.dart';
 
 class AttendiqoApp extends StatefulWidget {
@@ -29,6 +30,9 @@ class AttendiqoApp extends StatefulWidget {
 
 class _AttendiqoAppState extends State<AttendiqoApp> {
   late final AuthenticationController _controller;
+  final ValueNotifier<String?> _notificationDestination = ValueNotifier(null);
+  NotificationLifecycleCoordinator? _notifications;
+  AppNotificationLifecycle? _notificationService;
 
   @override
   void initState() {
@@ -42,10 +46,21 @@ class _AttendiqoAppState extends State<AttendiqoApp> {
       repository: repository,
       audience: AppAudience.management,
     )..start();
+    if (widget.firebaseReady) {
+      _notificationService = FirebaseNotificationLifecycle();
+      _notifications = NotificationLifecycleCoordinator(
+        _controller,
+        _notificationService!,
+        onTap: _openNotificationDestination,
+        onForeground: _openNotificationDestination,
+      )..start();
+    }
   }
 
   @override
   void dispose() {
+    _notifications?.dispose();
+    _notificationDestination.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -55,8 +70,11 @@ class _AttendiqoAppState extends State<AttendiqoApp> {
     title: 'Attendiqo',
     debugShowCheckedModeBanner: false,
     theme: AttendiqoTheme.light(),
-    onGenerateRoute: (settings) =>
-        AppRouter.generate(settings, controller: _controller),
+    onGenerateRoute: (settings) => AppRouter.generate(
+      settings,
+      controller: _controller,
+      notificationService: _notificationService,
+    ),
     home: AnimatedBuilder(
       animation: _controller,
       builder: (_, _) => _screenFor(_controller.state),
@@ -75,10 +93,15 @@ class _AttendiqoAppState extends State<AttendiqoApp> {
       controller: _controller,
       errorMessage: state.message,
     ),
-    AuthenticationStatus.blocked => AccessBlockedScreen(
-      message: state.message ?? 'This account cannot use Attendiqo.',
-      onSignOut: _controller.signOut,
-    ),
+    AuthenticationStatus.blocked =>
+      state.profile?.active == true &&
+              state.profile?.role != UserRole.parent &&
+              _controller.repository is MembershipWorkflowRepository
+          ? MembershipAccessScreen(controller: _controller)
+          : AccessBlockedScreen(
+              message: state.message ?? 'This account cannot use Attendiqo.',
+              onSignOut: _controller.signOut,
+            ),
     AuthenticationStatus.mustChangePassword => ChangePasswordScreen(
       controller: _controller,
       message: state.message,
@@ -91,6 +114,14 @@ class _AttendiqoAppState extends State<AttendiqoApp> {
       teacherBuilder: widget.firebaseReady
           ? (controller) => AcademicManagementArea(authController: controller)
           : null,
+      notificationDestination: _notificationDestination,
+      activeInstituteId: state.activeMembership?.instituteId,
     ),
   };
+
+  void _openNotificationDestination(NotificationTapRoute route) {
+    // The route has already passed the current authentication/role gate. It is
+    // route-only, so no document identifier can be trusted from an FCM payload.
+    _notificationDestination.value = route.destination;
+  }
 }

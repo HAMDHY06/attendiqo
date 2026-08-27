@@ -1,5 +1,11 @@
 enum UserRole { superAdmin, instituteAdmin, teacher, parent }
 
+/// Lifecycle for an institute-scoped account membership.
+///
+/// A join code can create only a pending request. It never makes a membership
+/// active by itself.
+enum InstituteMembershipStatus { pending, active, rejected, suspended, revoked }
+
 extension UserRoleSerialization on UserRole {
   String get wireName => name;
 
@@ -62,6 +68,30 @@ enum ScannerResultStatus {
 enum AttendanceSyncState { confirmed, queued, conflict }
 
 enum NotificationType { arrival, departure, late, general }
+
+/// Review-only Phase 8 event contract. Delivery requires a trusted backend.
+enum PushNotificationEvent {
+  parentStudentEntry,
+  parentStudentExit,
+  parentStudentLate,
+  parentAttendanceCorrected,
+  classScheduleChanged,
+  classCancelled,
+  instituteNotice,
+  parentLinkCreated,
+  parentLinkRevoked,
+  teacherAssignmentChanged,
+  accountSecurityAlert,
+  instituteSuspended,
+  instituteReactivated,
+  projectionFailure,
+  reconciliationFailure,
+  backendHealthWarning,
+}
+
+enum NotificationPermissionState { unknown, granted, denied, permanentlyDenied }
+
+enum NotificationDeliveryStatus { pending, sent, failed, skipped }
 
 enum SmsMessageType { arrival, departure }
 

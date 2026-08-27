@@ -38,6 +38,69 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/institutes/$(callerProfile().instituteId)).data.status == 'active';
     }
 
+    function isActiveParent() {
+      return signedIn()
+        && callerProfile().active == true
+        && callerProfile().role == 'parent';
+    }
+
+    function hasActiveParentLink(studentId, instituteId) {
+      return isActiveParent()
+        && exists(/databases/$(database)/documents/parent_student_links/$(request.auth.uid + '_' + studentId))
+        && get(/databases/$(database)/documents/parent_student_links/$(request.auth.uid + '_' + studentId)).data.active == true
+        && get(/databases/$(database)/documents/parent_student_links/$(request.auth.uid + '_' + studentId)).data.instituteId == instituteId;
+    }
+
+    function parentScope() {
+      return get(/databases/$(database)/documents/parent_access_scopes/$(request.auth.uid)).data;
+    }
+
+    function activeParentScope() {
+      return isActiveParent()
+        && exists(/databases/$(database)/documents/parent_access_scopes/$(request.auth.uid))
+        && parentScope().active == true;
+    }
+
+    function instituteIsActive(instituteId) {
+      return get(/databases/$(database)/documents/institutes/$(instituteId)).data.active == true
+        && get(/databases/$(database)/documents/institutes/$(instituteId)).data.status == 'active';
+    }
+
+    function parentCanReadStudent(studentId, instituteId) {
+      return activeParentScope()
+        && studentId in parentScope().studentIds
+        && instituteId in parentScope().instituteIds
+        && hasActiveParentLink(studentId, instituteId)
+        && instituteIsActive(instituteId);
+    }
+
+    function parentCanReadClass(classId, instituteId) {
+      return activeParentScope()
+        && classId in parentScope().classIds
+        && instituteId in parentScope().instituteIds
+        && instituteIsActive(instituteId);
+    }
+
+    function parentCanReadInstitute(instituteId) {
+      return activeParentScope()
+        && instituteId in parentScope().instituteIds
+        && instituteIsActive(instituteId);
+    }
+
+    function parentCanReadNotice(data) {
+      return parentCanReadInstitute(data.instituteId)
+        && data.active == true
+        && data.publishedAt <= request.time
+        && (data.expiresAt == null || data.expiresAt > request.time)
+        && (
+          data.targetType == 'instituteParents'
+          || (data.targetType == 'student'
+            && data.targetStudentIds.hasAny(parentScope().studentIds))
+          || (data.targetType == 'class'
+            && data.targetClassIds.hasAny(parentScope().classIds))
+        );
+    }
+
     function teacherPermission(permission) {
       return isActiveTeacher()
         && callerProfile().permissions[permission] == true;
@@ -370,6 +433,17 @@ service cloud.firestore {
         && data.updatedBy == request.auth.uid;
     }
 
+    // Consent is intentionally minimal: no phone number, parent contact, or
+    // message content is stored here. A Worker verifies it before requesting
+    // any provider delivery.
+    function validStudentSmsConsent(data, studentId) {
+      return data.keys().hasOnly(['studentId', 'instituteId', 'granted', 'updatedAt'])
+        && data.studentId == studentId
+        && data.instituteId is string
+        && data.granted is bool
+        && data.updatedAt == request.time;
+    }
+
     function validClassCode(code) {
       return code is string && code.size() >= 2 && code.size() <= 32
         && code.matches('^[A-Z0-9][A-Z0-9_-]{1,31}$');
@@ -573,6 +647,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /student_sms_consents/{studentId} {
+      allow get: if hasVerifiedSuperAdminClaim()
+        || (isActiveInstituteAdmin() && resource.data.instituteId == callerProfile().instituteId)
+        || hasActiveParentLink(studentId, resource.data.instituteId);
+      allow list: if hasVerifiedSuperAdminClaim()
+        || (isActiveInstituteAdmin() && resource.data.instituteId == callerProfile().instituteId);
+      allow create: if validStudentSmsConsent(request.resource.data, studentId)
+        && hasActiveParentLink(studentId, request.resource.data.instituteId);
+      allow update: if validStudentSmsConsent(request.resource.data, studentId)
+        && request.resource.data.instituteId == resource.data.instituteId
+        && hasActiveParentLink(studentId, resource.data.instituteId);
+      allow delete: if false;
+    }
+
     match /classes/{classId} {
       allow read: if hasVerifiedSuperAdminClaim()
         || (isActiveInstituteAdmin() && resource.data.instituteId == callerProfile().instituteId)
@@ -720,6 +808,88 @@ service cloud.firestore {
     match /attendance_corrections/{correctionId} {
       allow read, write: if false;
     }
+
+    // Phase 7 parent-facing projections. These are written only by a future
+    // trusted backend; parents never read full students or institute records.
+    match /parent_student_links/{linkId} {
+      allow get, list: if isActiveParent()
+        && resource.data.parentUid == request.auth.uid
+        && resource.data.active == true
+        && instituteIsActive(resource.data.instituteId)
+        && exists(/databases/$(database)/documents/parent_student_profiles/$(resource.data.studentId))
+        && get(/databases/$(database)/documents/parent_student_profiles/$(resource.data.studentId)).data.instituteId
+          == resource.data.instituteId
+        && linkId == request.auth.uid + '_' + resource.data.studentId;
+      allow create, update, delete: if false;
+    }
+
+    match /parent_student_profiles/{studentId} {
+      allow get: if parentCanReadStudent(studentId, resource.data.instituteId);
+      allow list, create, update, delete: if false;
+    }
+
+    match /parent_access_scopes/{parentUid} {
+      allow read, write: if false;
+    }
+
+    // Callable-only operational state. These documents contain hashed actor
+    // identifiers and safe metadata, but no mobile client may access them.
+    match /backend_rate_limits/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /backend_idempotency/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /backend_callable_audits/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /parent_class_profiles/{classId} {
+      allow get: if parentCanReadClass(classId, resource.data.instituteId)
+        && resource.data.active == true;
+      allow list, create, update, delete: if false;
+    }
+
+    match /parent_attendance_summaries/{summaryId} {
+      allow get, list: if parentCanReadStudent(
+        resource.data.studentId,
+        resource.data.instituteId
+      );
+      allow create, update, delete: if false;
+    }
+
+    match /parent_notices/{noticeId} {
+      allow get, list: if parentCanReadNotice(resource.data);
+      allow create, update, delete: if false;
+    }
+
+    match /institute_public_profiles/{instituteId} {
+      allow get: if parentCanReadInstitute(instituteId)
+        && resource.data.instituteId == instituteId;
+      allow list, create, update, delete: if false;
+    }
+
+    // Device registration is callable-only so protected FCM tokens are never
+    // exposed by client Firestore access.
+    match /notification_devices/{uid}/tokens/{tokenId} {
+      allow read, write: if false;
+    }
+    match /notification_preferences/{uid} {
+      allow read, write: if false;
+    }
+
+    // Multi-institute membership is callable-only. A visible join code is an
+    // identifier, never a client-readable credential or an access grant.
+    match /institute_join_codes/{code} { allow read, write: if false; }
+    match /institute_memberships/{membershipId} { allow read, write: if false; }
+    match /institute_join_requests/{requestId} { allow read, write: if false; }
+
+    // SMS queues contain protected phone/provider metadata and are backend-only.
+    match /sms_outbox/{messageId} { allow read, write: if false; }
+    match /sms_deliveries/{deliveryId} { allow read, write: if false; }
+    match /sms_rate_limits/{key} { allow read, write: if false; }
 
     match /{document=**} {
       allow read, write: if false;

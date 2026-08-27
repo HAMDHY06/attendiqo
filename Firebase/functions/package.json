@@ -1,0 +1,28 @@
+{
+  "name": "attendiqo-parent-projection-callables",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.mjs",
+  "files": [
+    "index.mjs",
+    "lib/**",
+    "tools/**",
+    "README.md"
+  ],
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test tests/callable_core.test.mjs tests/runtime_guard.test.mjs tests/package_boundary.test.mjs tests/notification_device_writer.test.mjs tests/self_service_callable_core.test.mjs tests/notification_preferences_writer.test.mjs tests/notification_outbox_writer.test.mjs tests/notification_delivery_worker.test.mjs tests/sms_validation.test.mjs tests/sms_outbox_writer.test.mjs tests/sms_delivery_worker.test.mjs tests/institute_membership_writer.test.mjs",
+    "test:package": "node --test tests/package_boundary.test.mjs",
+    "test:integration": "node --test --test-concurrency=1 tests/callable.integration.test.mjs tests/notification_device.integration.test.mjs",
+    "test:emulator-smoke": "node --test tests/functions_emulator_smoke.test.mjs",
+    "check": "node --check index.mjs && node --check lib/callable_core.mjs && node --check lib/parent_projection_writers.mjs"
+  },
+  "dependencies": {
+    "@firebase/app": "^0.16.0",
+    "firebase-admin": "^14.2.0",
+    "firebase-functions": "^7.3.2"
+  }
+}

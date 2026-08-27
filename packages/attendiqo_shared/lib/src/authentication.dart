@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'enums.dart';
+import 'institute_membership.dart';
 import 'models.dart';
 import 'validation.dart';
 
@@ -30,6 +31,29 @@ abstract interface class AuthenticationRepository {
   Future<UserProfile?> loadProfile(String uid);
   Future<void> markLastLogin(String uid);
   Future<void> clearMustChangePassword(String uid);
+}
+
+/// Trusted source of institute memberships for the authenticated account.
+/// Implementations must return only memberships for the authenticated user;
+/// UI code must never provide an arbitrary UID to this interface.
+abstract interface class ActiveMembershipRepository {
+  Future<List<InstituteMembership>> loadOwnMemberships(String authenticatedUid);
+}
+
+/// All membership mutations stay in the trusted Worker. Implementations never
+/// expose membership collection references to mobile callers.
+abstract interface class MembershipWorkflowRepository {
+  Future<InstituteJoinRequest> requestMembership({
+    required String joinCode,
+    required UserRole requestedRole,
+  });
+  Future<List<InstituteJoinRequest>> loadOwnRequests();
+  Future<List<InstituteJoinRequest>> loadReviewableRequests();
+  Future<InstituteMembershipStatus> reviewRequest({
+    required String requestId,
+    required bool approve,
+  });
+  Future<InstituteMembershipStatus> revokeMembership(String membershipId);
 }
 
 class UnavailableAuthenticationRepository implements AuthenticationRepository {
@@ -69,7 +93,11 @@ class AccessDecision {
 }
 
 abstract final class AuthenticationPolicy {
-  static AccessDecision evaluate(UserProfile profile, AppAudience audience) {
+  static AccessDecision evaluate(
+    UserProfile profile,
+    AppAudience audience, {
+    ActiveInstituteSession? activeMembership,
+  }) {
     if (!profile.active) {
       return const AccessDecision.blocked(
         AuthFailure(
@@ -78,15 +106,18 @@ abstract final class AuthenticationPolicy {
         ),
       );
     }
-    if (!profile.hasValidInstituteAssignment) {
+    final isGlobalSuperAdmin = profile.role == UserRole.superAdmin;
+    if (!isGlobalSuperAdmin && activeMembership == null) {
       return const AccessDecision.blocked(
         AuthFailure(
           AuthFailureCode.permissionDenied,
-          'This account profile is incomplete. Contact your administrator.',
+          'No approved institute access is available for this account.',
         ),
       );
     }
-    if (audience == AppAudience.management && profile.role == UserRole.parent) {
+    final effectiveRole = activeMembership?.role ?? profile.role;
+    if (audience == AppAudience.management &&
+        effectiveRole == UserRole.parent) {
       return const AccessDecision.blocked(
         AuthFailure(
           AuthFailureCode.unsupportedRole,
@@ -94,7 +125,7 @@ abstract final class AuthenticationPolicy {
         ),
       );
     }
-    if (audience == AppAudience.connect && profile.role != UserRole.parent) {
+    if (audience == AppAudience.connect && effectiveRole != UserRole.parent) {
       return const AccessDecision.blocked(
         AuthFailure(
           AuthFailureCode.unsupportedRole,
@@ -105,7 +136,7 @@ abstract final class AuthenticationPolicy {
     if (profile.mustChangePassword) {
       return const AccessDecision.allowed(AuthDestination.changePassword);
     }
-    return AccessDecision.allowed(switch (profile.role) {
+    return AccessDecision.allowed(switch (effectiveRole) {
       UserRole.superAdmin => AuthDestination.superAdminDashboard,
       UserRole.instituteAdmin => AuthDestination.instituteAdminDashboard,
       UserRole.teacher => AuthDestination.teacherDashboard,
@@ -119,12 +150,16 @@ class AuthenticationState {
     this.status, {
     this.destination,
     this.profile,
+    this.activeMembership,
+    this.memberships = const [],
     this.message,
   });
   const AuthenticationState.checking() : this(AuthenticationStatus.checking);
   final AuthenticationStatus status;
   final AuthDestination? destination;
   final UserProfile? profile;
+  final ActiveInstituteSession? activeMembership;
+  final List<InstituteMembership> memberships;
   final String? message;
 }
 
@@ -134,8 +169,17 @@ class AuthenticationController extends ChangeNotifier {
   final AppAudience audience;
   AuthenticationState _state = const AuthenticationState.checking();
   AuthenticationState get state => _state;
+
+  /// Reloads Worker-backed memberships after a trusted approval or revocation.
+  Future<void> refreshMemberships() async {
+    final profile = _state.profile;
+    if (profile == null) return;
+    await _resolve(AuthenticatedUser(uid: profile.uid, email: profile.email));
+  }
+
   StreamSubscription<AuthenticatedUser?>? _subscription;
   int _generation = 0;
+  String? _selectedInstituteId;
 
   void start() {
     _subscription ??= repository.authStateChanges().listen(
@@ -220,6 +264,7 @@ class AuthenticationController extends ChangeNotifier {
     try {
       await repository.signOut();
     } finally {
+      _selectedInstituteId = null;
       _setState(
         const AuthenticationState(
           AuthenticationStatus.signedOut,
@@ -253,12 +298,28 @@ class AuthenticationController extends ChangeNotifier {
         );
         return;
       }
-      final decision = AuthenticationPolicy.evaluate(profile, audience);
+      final memberships = await _loadMemberships(profile, user.uid);
+      final activeMembership = ActiveInstituteSelection.select(
+        memberships: memberships,
+        uid: user.uid,
+        preferredInstituteId: _selectedInstituteId,
+      );
+      if (generation != _generation) return;
+      final sessionProfile = activeMembership == null
+          ? profile
+          : profile.forActiveMembership(activeMembership);
+      final decision = AuthenticationPolicy.evaluate(
+        sessionProfile,
+        audience,
+        activeMembership: activeMembership,
+      );
       if (!decision.isAllowed) {
         _setState(
           AuthenticationState(
             AuthenticationStatus.blocked,
-            profile: profile,
+            profile: sessionProfile,
+            activeMembership: activeMembership,
+            memberships: memberships,
             message: decision.error!.userMessage,
           ),
         );
@@ -272,7 +333,9 @@ class AuthenticationController extends ChangeNotifier {
               ? AuthenticationStatus.mustChangePassword
               : AuthenticationStatus.authenticated,
           destination: destination,
-          profile: profile,
+          profile: sessionProfile,
+          activeMembership: activeMembership,
+          memberships: memberships,
         ),
       );
     } on AuthFailure catch (failure) {
@@ -284,6 +347,52 @@ class AuthenticationController extends ChangeNotifier {
         _setFailure('Unable to load your account profile. Please try again.');
       }
     }
+  }
+
+  Future<List<InstituteMembership>> _loadMemberships(
+    UserProfile profile,
+    String uid,
+  ) async {
+    if (profile.role == UserRole.superAdmin) return const [];
+    if (repository is! ActiveMembershipRepository) return const [];
+    return (repository as ActiveMembershipRepository).loadOwnMemberships(uid);
+  }
+
+  /// Retains a permitted institute only for the current controller session.
+  /// No inactive membership or arbitrary institute ID can become selected.
+  Future<bool> selectActiveInstitute(String instituteId) async {
+    final profile = _state.profile;
+    if (_state.status != AuthenticationStatus.authenticated ||
+        profile == null ||
+        instituteId.trim().isEmpty) {
+      return false;
+    }
+    final membership = ActiveInstituteSelection.select(
+      memberships: _state.memberships,
+      uid: profile.uid,
+      preferredInstituteId: instituteId,
+    );
+    if (membership == null || membership.instituteId != instituteId) {
+      return false;
+    }
+    _selectedInstituteId = instituteId;
+    final sessionProfile = profile.forActiveMembership(membership);
+    final decision = AuthenticationPolicy.evaluate(
+      sessionProfile,
+      audience,
+      activeMembership: membership,
+    );
+    if (!decision.isAllowed) return false;
+    _setState(
+      AuthenticationState(
+        AuthenticationStatus.authenticated,
+        destination: decision.destination,
+        profile: sessionProfile,
+        activeMembership: membership,
+        memberships: _state.memberships,
+      ),
+    );
+    return true;
   }
 
   void _setFailure(String message) => _setState(

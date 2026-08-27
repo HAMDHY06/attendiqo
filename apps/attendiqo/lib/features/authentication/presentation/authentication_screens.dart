@@ -253,3 +253,265 @@ class AccessBlockedScreen extends StatelessWidget {
     ),
   );
 }
+
+/// Worker-backed join/status surface. It contains no Firestore membership
+/// writes and deliberately hides reviewer controls from Teachers and Parents.
+class MembershipAccessScreen extends StatefulWidget {
+  const MembershipAccessScreen({super.key, required this.controller});
+  final AuthenticationController controller;
+  @override
+  State<MembershipAccessScreen> createState() => _MembershipAccessScreenState();
+}
+
+class _MembershipAccessScreenState extends State<MembershipAccessScreen> {
+  final _code = TextEditingController();
+  UserRole _role = UserRole.teacher;
+  bool _busy = false;
+  String? _message;
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  MembershipWorkflowRepository? get _workflow =>
+      widget.controller.repository is MembershipWorkflowRepository
+      ? widget.controller.repository as MembershipWorkflowRepository
+      : null;
+  String get _statusMessage {
+    final status = widget.controller.state.memberships
+        .where((item) => item.status != InstituteMembershipStatus.active)
+        .map((item) => item.status)
+        .firstOrNull;
+    return switch (status) {
+      InstituteMembershipStatus.pending =>
+        'Your institute request is pending approval.',
+      InstituteMembershipStatus.rejected =>
+        'Your institute request was not approved. You may submit a new request.',
+      InstituteMembershipStatus.suspended =>
+        'Your institute access is suspended. Contact the institute.',
+      InstituteMembershipStatus.revoked =>
+        'Your institute access was revoked. Request access again if appropriate.',
+      _ =>
+        'Request access with an institute join code. A code never grants access by itself.',
+    };
+  }
+
+  Future<void> _request() async {
+    final workflow = _workflow;
+    if (workflow == null || _code.text.trim().isEmpty) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await workflow.requestMembership(
+        joinCode: _code.text,
+        requestedRole: _role,
+      );
+      if (mounted) {
+        setState(
+          () => _message =
+              'Request submitted. Approval is required before access is granted.',
+        );
+      }
+    } on MembershipWorkerFailure catch (error) {
+      if (mounted) setState(() => _message = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Institute access')),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Icon(Icons.hourglass_top_rounded, size: 64),
+              const SizedBox(height: 16),
+              Text(_message ?? _statusMessage, textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _code,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Institute join code',
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<UserRole>(
+                initialValue: _role,
+                items: const [
+                  DropdownMenuItem(
+                    value: UserRole.teacher,
+                    child: Text('Teacher'),
+                  ),
+                  DropdownMenuItem(
+                    value: UserRole.instituteAdmin,
+                    child: Text('Institute Admin'),
+                  ),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (value) =>
+                          setState(() => _role = value ?? UserRole.teacher),
+                decoration: const InputDecoration(labelText: 'Requested role'),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _busy ? null : _request,
+                child: Text(_busy ? 'Submitting…' : 'Request access'),
+              ),
+              TextButton(
+                onPressed: _busy ? null : widget.controller.signOut,
+                child: const Text('Sign out'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class MembershipReviewScreen extends StatefulWidget {
+  const MembershipReviewScreen({super.key, required this.controller});
+  final AuthenticationController controller;
+  @override
+  State<MembershipReviewScreen> createState() => _MembershipReviewScreenState();
+}
+
+class _MembershipReviewScreenState extends State<MembershipReviewScreen> {
+  List<InstituteJoinRequest>? _requests;
+  String? _error;
+  bool _loading = true;
+  MembershipWorkflowRepository? get _workflow =>
+      widget.controller.repository is MembershipWorkflowRepository
+      ? widget.controller.repository as MembershipWorkflowRepository
+      : null;
+  bool get _mayReview {
+    final role = widget.controller.state.profile?.role;
+    return role == UserRole.superAdmin || role == UserRole.instituteAdmin;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final workflow = _workflow;
+    if (!_mayReview || workflow == null) {
+      setState(() {
+        _loading = false;
+        _error = 'Membership approvals are unavailable for this account.';
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final active = widget.controller.state.activeMembership?.instituteId;
+      final values = await workflow.loadReviewableRequests();
+      if (mounted) {
+        setState(
+          () => _requests =
+              widget.controller.state.profile?.role == UserRole.superAdmin
+              ? values
+                    .where(
+                      (item) => item.requestedRole == UserRole.instituteAdmin,
+                    )
+                    .toList()
+              : values
+                    .where(
+                      (item) =>
+                          item.instituteId == active &&
+                          (item.requestedRole == UserRole.teacher ||
+                              item.requestedRole == UserRole.parent),
+                    )
+                    .toList(),
+        );
+      }
+    } on MembershipWorkerFailure catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _review(InstituteJoinRequest item, bool approve) async {
+    final workflow = _workflow;
+    if (workflow == null) return;
+    setState(() => _loading = true);
+    try {
+      await workflow.reviewRequest(requestId: item.requestId, approve: approve);
+      await widget.controller.refreshMemberships();
+      await _load();
+    } on MembershipWorkerFailure catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget body;
+    if (_loading) {
+      body = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      body = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!, textAlign: TextAlign.center),
+            TextButton(onPressed: _load, child: const Text('Retry')),
+          ],
+        ),
+      );
+    } else if (_requests?.isEmpty ?? true) {
+      body = const Center(child: Text('No membership requests need review.'));
+    } else {
+      body = RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.builder(
+          itemCount: _requests!.length,
+          itemBuilder: (_, index) {
+            final item = _requests![index];
+            return ListTile(
+              title: Text('${item.requestedRole.name} request'),
+              subtitle: const Text('Pending approval'),
+              trailing: Wrap(
+                spacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: () => _review(item, false),
+                    child: const Text('Reject'),
+                  ),
+                  FilledButton(
+                    onPressed: () => _review(item, true),
+                    child: const Text('Approve'),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('Membership approvals')),
+      body: body,
+    );
+  }
+}

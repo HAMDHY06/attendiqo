@@ -1,5 +1,6 @@
 import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 class FirestoreAcademicRepository implements AcademicRepository {
   FirestoreAcademicRepository({FirebaseFirestore? firestore})
@@ -92,16 +93,18 @@ class FirestoreAcademicRepository implements AcademicRepository {
     final auditReference = _firestore
         .collection(FirestoreCollections.auditLogs)
         .doc();
+    var transactionStage = 'starting';
+    _debugClassCreation(
+      stage: transactionStage,
+      actor: actor,
+      classPath: classReference.path,
+      reservationPath: codeReference.path,
+      auditPath: auditReference.path,
+    );
     try {
       await _firestore.runTransaction((transaction) async {
-        final existingCode = await transaction.get(codeReference);
-        if (existingCode.exists) {
-          throw const Failure(
-            'Class code already exists.',
-            code: 'duplicate-class-code',
-          );
-        }
         for (final teacherId in value.teacherIds) {
+          transactionStage = 'validating-teacher-assignment';
           final teacher = await transaction.get(
             _firestore.collection(FirestoreCollections.users).doc(teacherId),
           );
@@ -114,6 +117,11 @@ class FirestoreAcademicRepository implements AcademicRepository {
             );
           }
         }
+        // A missing reservation is intentionally not readable by clients:
+        // Rules cannot associate it with an institute until it exists. Writing
+        // it in this atomic transaction is safe: an existing reservation is an
+        // update and is denied by Rules, preserving class-code uniqueness.
+        transactionStage = 'writing-class-and-code-reservation';
         transaction.set(classReference, _serverMap(value.toMap()));
         transaction.set(codeReference, {
           'instituteId': value.instituteId,
@@ -122,6 +130,7 @@ class FirestoreAcademicRepository implements AcademicRepository {
           'createdAt': FieldValue.serverTimestamp(),
           'createdBy': actor.uid,
         });
+        transactionStage = 'writing-audit-log';
         transaction.set(
           auditReference,
           _audit(
@@ -135,9 +144,25 @@ class FirestoreAcademicRepository implements AcademicRepository {
           ),
         );
       });
-    } on Failure {
+    } on Failure catch (failure) {
+      _debugClassCreation(
+        stage: transactionStage,
+        actor: actor,
+        classPath: classReference.path,
+        reservationPath: codeReference.path,
+        auditPath: auditReference.path,
+        errorCode: failure.code,
+      );
       rethrow;
     } on FirebaseException catch (error) {
+      _debugClassCreation(
+        stage: transactionStage,
+        actor: actor,
+        classPath: classReference.path,
+        reservationPath: codeReference.path,
+        auditPath: auditReference.path,
+        errorCode: error.code,
+      );
       throw Failure(
         SafeErrorMapper.fromCode(
           error.code,
@@ -147,6 +172,24 @@ class FirestoreAcademicRepository implements AcademicRepository {
       );
     }
     return value;
+  }
+
+  void _debugClassCreation({
+    required String stage,
+    required UserProfile actor,
+    required String classPath,
+    required String reservationPath,
+    required String auditPath,
+    String? errorCode,
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[AcademicClassCreate] stage=$stage uid=${actor.uid} '
+      'role=${actor.role.name} instituteId=${actor.instituteId ?? 'none'} '
+      'active=${actor.active} classPath=$classPath '
+      'reservationPath=$reservationPath auditPath=$auditPath '
+      'errorCode=${errorCode ?? 'none'}',
+    );
   }
 
   @override
@@ -350,35 +393,88 @@ class FirestoreAcademicRepository implements AcademicRepository {
     final auditReference = _firestore
         .collection(FirestoreCollections.auditLogs)
         .doc();
-    await _firestore.runTransaction((transaction) async {
-      if ((await transaction.get(reservation)).exists) {
-        throw const Failure(
-          'Student number already exists.',
-          code: 'duplicate-student-number',
+    var transactionStage = 'starting';
+    _debugStudentCreation(
+      stage: transactionStage,
+      actor: actor,
+      studentPath: reference.path,
+      reservationPath: reservation.path,
+      auditPath: auditReference.path,
+    );
+    try {
+      await _firestore.runTransaction((transaction) async {
+        // Do not read a missing reservation. The Rules safely deny that
+        // unscoped read. This set is an update when the number already exists,
+        // and Rules deny updates, preserving uniqueness atomically.
+        transactionStage = 'writing-student-and-number-reservation';
+        transaction.set(reference, _serverMap(value.toMap()));
+        transaction.set(reservation, {
+          'instituteId': value.instituteId,
+          'studentNumber': value.studentNumber,
+          'studentId': value.studentId,
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': actor.uid,
+        });
+        transactionStage = 'writing-audit-log';
+        transaction.set(
+          auditReference,
+          _audit(
+            auditReference.id,
+            actor,
+            value.instituteId,
+            AuditAction.studentCreated,
+            AuditTargetType.student,
+            value.studentId,
+            'Student created',
+          ),
         );
-      }
-      transaction.set(reference, _serverMap(value.toMap()));
-      transaction.set(reservation, {
-        'instituteId': value.instituteId,
-        'studentNumber': value.studentNumber,
-        'studentId': value.studentId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'createdBy': actor.uid,
       });
-      transaction.set(
-        auditReference,
-        _audit(
-          auditReference.id,
-          actor,
-          value.instituteId,
-          AuditAction.studentCreated,
-          AuditTargetType.student,
-          value.studentId,
-          'Student created',
-        ),
+    } on Failure catch (failure) {
+      _debugStudentCreation(
+        stage: transactionStage,
+        actor: actor,
+        studentPath: reference.path,
+        reservationPath: reservation.path,
+        auditPath: auditReference.path,
+        errorCode: failure.code,
       );
-    });
+      rethrow;
+    } on FirebaseException catch (error) {
+      _debugStudentCreation(
+        stage: transactionStage,
+        actor: actor,
+        studentPath: reference.path,
+        reservationPath: reservation.path,
+        auditPath: auditReference.path,
+        errorCode: error.code,
+      );
+      throw Failure(
+        SafeErrorMapper.fromCode(
+          error.code,
+          fallback: 'The student could not be created. Please try again.',
+        ),
+        code: error.code,
+      );
+    }
     return value;
+  }
+
+  void _debugStudentCreation({
+    required String stage,
+    required UserProfile actor,
+    required String studentPath,
+    required String reservationPath,
+    required String auditPath,
+    String? errorCode,
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[AcademicStudentCreate] stage=$stage uid=${actor.uid} '
+      'role=${actor.role.name} instituteId=${actor.instituteId ?? 'none'} '
+      'profileActive=${actor.active} studentPath=$studentPath '
+      'reservationPath=$reservationPath auditPath=$auditPath '
+      'errorCode=${errorCode ?? 'none'}',
+    );
   }
 
   @override

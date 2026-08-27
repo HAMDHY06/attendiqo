@@ -15,6 +15,12 @@ abstract final class FirestoreCollections {
   static const attendanceCorrections = 'attendance_corrections';
   static const qrTokens = 'qr_tokens';
   static const parentStudentLinks = 'parent_student_links';
+  static const parentAccessScopes = 'parent_access_scopes';
+  static const parentStudentProfiles = 'parent_student_profiles';
+  static const parentClassProfiles = 'parent_class_profiles';
+  static const parentAttendanceSummaries = 'parent_attendance_summaries';
+  static const institutePublicProfiles = 'institute_public_profiles';
+  static const parentNotices = 'parent_notices';
   static const notificationTokens = 'notification_tokens';
   static const notifications = 'notifications';
   static const smsLogs = 'sms_logs';

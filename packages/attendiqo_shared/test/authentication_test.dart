@@ -3,7 +3,8 @@ import 'dart:async';
 import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class FakeAuthenticationRepository implements AuthenticationRepository {
+class FakeAuthenticationRepository
+    implements AuthenticationRepository, ActiveMembershipRepository {
   final controller = StreamController<AuthenticatedUser?>.broadcast();
   final profiles = <String, UserProfile>{};
   AuthFailure? signInFailure;
@@ -12,11 +13,32 @@ class FakeAuthenticationRepository implements AuthenticationRepository {
   bool resetRequested = false;
   bool passwordUpdated = false;
   bool forceFlagCleared = false;
+  List<InstituteMembership> memberships = const [];
 
   @override
   Stream<AuthenticatedUser?> authStateChanges() => controller.stream;
   @override
   Future<UserProfile?> loadProfile(String uid) async => profiles[uid];
+  @override
+  Future<List<InstituteMembership>> loadOwnMemberships(
+    String authenticatedUid,
+  ) async {
+    if (memberships.isNotEmpty) return memberships;
+    final current = profiles[authenticatedUid];
+    if (current == null || current.role == UserRole.superAdmin) {
+      return const [];
+    }
+    return [
+      InstituteMembership(
+        uid: authenticatedUid,
+        instituteId: 'institute-1',
+        role: current.role,
+        status: InstituteMembershipStatus.active,
+        requestedAt: DateTime.utc(2026),
+      ),
+    ];
+  }
+
   @override
   Future<void> markLastLogin(String uid) async {}
   @override
@@ -73,7 +95,36 @@ UserProfile profile({
   updatedAt: DateTime.utc(2026),
 );
 
+ActiveInstituteSession activeMembership(UserRole role) =>
+    ActiveInstituteSession.fromMembership(
+      InstituteMembership(
+        uid: 'u1',
+        instituteId: 'institute-1',
+        role: role,
+        status: InstituteMembershipStatus.active,
+        requestedAt: DateTime.utc(2026),
+      ),
+    );
+
 void main() {
+  test('approved membership determines the management destination', () {
+    final userProfile = profile(role: UserRole.parent);
+    final decision = AuthenticationPolicy.evaluate(
+      userProfile,
+      AppAudience.management,
+      activeMembership: ActiveInstituteSession.fromMembership(
+        InstituteMembership(
+          uid: userProfile.uid,
+          instituteId: 'institute_b',
+          role: UserRole.instituteAdmin,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ),
+    );
+
+    expect(decision.destination, AuthDestination.instituteAdminDashboard);
+  });
   test('email validation rejects malformed values', () {
     expect(FieldValidators.email(''), 'Email is required');
     expect(FieldValidators.email('invalid'), isNotNull);
@@ -147,6 +198,7 @@ void main() {
       AuthenticationPolicy.evaluate(
         profile(role: UserRole.instituteAdmin),
         AppAudience.management,
+        activeMembership: activeMembership(UserRole.instituteAdmin),
       ).destination,
       AuthDestination.instituteAdminDashboard,
     );
@@ -154,6 +206,7 @@ void main() {
       AuthenticationPolicy.evaluate(
         profile(),
         AppAudience.management,
+        activeMembership: activeMembership(UserRole.teacher),
       ).destination,
       AuthDestination.teacherDashboard,
     );
@@ -161,6 +214,7 @@ void main() {
       AuthenticationPolicy.evaluate(
         profile(role: UserRole.parent, instituteId: null),
         AppAudience.connect,
+        activeMembership: activeMembership(UserRole.parent),
       ).destination,
       AuthDestination.parentDashboard,
     );
@@ -170,10 +224,12 @@ void main() {
     final parent = AuthenticationPolicy.evaluate(
       profile(role: UserRole.parent, instituteId: null),
       AppAudience.management,
+      activeMembership: activeMembership(UserRole.parent),
     );
     final teacher = AuthenticationPolicy.evaluate(
       profile(),
       AppAudience.connect,
+      activeMembership: activeMembership(UserRole.teacher),
     );
     expect(
       parent.error!.userMessage,
@@ -197,6 +253,7 @@ void main() {
       AuthenticationPolicy.evaluate(
         profile(mustChangePassword: true),
         AppAudience.management,
+        activeMembership: activeMembership(UserRole.teacher),
       ).destination,
       AuthDestination.changePassword,
     );
@@ -219,6 +276,179 @@ void main() {
     await controller.signOut();
     expect(repository.signedOut, isTrue);
     expect(controller.state.status, AuthenticationStatus.signedOut);
+    controller.dispose();
+    await repository.dispose();
+  });
+
+  test('controller uses only active memberships from its repository', () async {
+    final repository = FakeAuthenticationRepository()
+      ..profiles['u1'] = profile(role: UserRole.parent)
+      ..memberships = [
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'pending-institute',
+          role: UserRole.instituteAdmin,
+          status: InstituteMembershipStatus.pending,
+          requestedAt: DateTime.utc(2026),
+        ),
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'approved-institute',
+          role: UserRole.instituteAdmin,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ];
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.management,
+    );
+
+    await controller.signIn(email: 'user@example.com', password: 'password');
+
+    expect(
+      controller.state.activeMembership?.instituteId,
+      'approved-institute',
+    );
+    expect(
+      controller.state.destination,
+      AuthDestination.instituteAdminDashboard,
+    );
+    controller.dispose();
+    await repository.dispose();
+  });
+
+  test('session switches only between approved active institutes', () async {
+    final repository = FakeAuthenticationRepository()
+      ..profiles['u1'] = profile()
+      ..memberships = [
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'first',
+          role: UserRole.teacher,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'second',
+          role: UserRole.instituteAdmin,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'pending',
+          role: UserRole.teacher,
+          status: InstituteMembershipStatus.pending,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ];
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.management,
+    );
+    await controller.signIn(email: 'user@example.com', password: 'password');
+
+    expect(controller.state.activeMembership?.instituteId, 'first');
+    expect(await controller.selectActiveInstitute('second'), isTrue);
+    expect(controller.state.activeMembership?.instituteId, 'second');
+    expect(controller.state.profile?.role, UserRole.instituteAdmin);
+    expect(
+      controller.state.activeMembership?.canUseTeacherCapabilities,
+      isTrue,
+    );
+    expect(await controller.selectActiveInstitute('pending'), isFalse);
+    expect(controller.state.activeMembership?.instituteId, 'second');
+    controller.dispose();
+    await repository.dispose();
+  });
+
+  test(
+    'refresh updates selectable memberships and removes a revoked selected institute',
+    () async {
+      final repository = FakeAuthenticationRepository()
+        ..profiles['u1'] = profile()
+        ..memberships = [
+          InstituteMembership(
+            uid: 'u1',
+            instituteId: 'first',
+            role: UserRole.teacher,
+            status: InstituteMembershipStatus.active,
+            requestedAt: DateTime.utc(2026),
+          ),
+        ];
+      final controller = AuthenticationController(
+        repository: repository,
+        audience: AppAudience.management,
+      );
+      await controller.signIn(email: 'user@example.com', password: 'password');
+      repository.memberships = [
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'first',
+          role: UserRole.teacher,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'second',
+          role: UserRole.teacher,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ];
+      await controller.refreshMemberships();
+      expect(await controller.selectActiveInstitute('second'), isTrue);
+      repository.memberships = [
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'first',
+          role: UserRole.teacher,
+          status: InstituteMembershipStatus.active,
+          requestedAt: DateTime.utc(2026),
+        ),
+        InstituteMembership(
+          uid: 'u1',
+          instituteId: 'second',
+          role: UserRole.teacher,
+          status: InstituteMembershipStatus.revoked,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ];
+      await controller.refreshMemberships();
+      expect(controller.state.activeMembership?.instituteId, 'first');
+      expect(await controller.selectActiveInstitute('second'), isFalse);
+      controller.dispose();
+      await repository.dispose();
+    },
+  );
+
+  test('non-active memberships cannot create an institute session', () async {
+    final repository = FakeAuthenticationRepository()
+      ..profiles['u1'] = profile()
+      ..memberships = InstituteMembershipStatus.values
+          .where((status) => status != InstituteMembershipStatus.active)
+          .map(
+            (status) => InstituteMembership(
+              uid: 'u1',
+              instituteId: status.name,
+              role: UserRole.teacher,
+              status: status,
+              requestedAt: DateTime.utc(2026),
+            ),
+          )
+          .toList(growable: false);
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.management,
+    );
+
+    await controller.signIn(email: 'user@example.com', password: 'password');
+
+    expect(controller.state.status, AuthenticationStatus.blocked);
+    expect(controller.state.activeMembership, isNull);
     controller.dispose();
     await repository.dispose();
   });

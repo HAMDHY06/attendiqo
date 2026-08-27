@@ -12,12 +12,15 @@ import {
   collection,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
   writeBatch,
+  runTransaction,
 } from 'firebase/firestore';
 
 const projectId = 'attendiqo-system';
@@ -104,7 +107,9 @@ beforeEach(async () => {
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const records = [
-      profile({ uid: 'parent-a', role: 'parent' }),
+      { ...profile({ uid: 'parent-a', role: 'parent' }), parentLinkedStudentIds: ['student-a'] },
+      profile({ uid: 'parent-b', role: 'parent' }),
+      profile({ uid: 'inactive-parent', role: 'parent', active: false }),
       profile({ uid: 'teacher-a', role: 'teacher', instituteId: 'institute-a' }),
       profile({ uid: 'teacher-b', role: 'teacher', instituteId: 'institute-b' }),
       profile({ uid: 'inactive-teacher', role: 'teacher', instituteId: 'institute-a', active: false }),
@@ -143,6 +148,92 @@ beforeEach(async () => {
       scheduleOverlapConfirmed: false, scheduleOverlapReason: null,
       scheduleOverlapConfirmedBy: null, scheduleOverlapConfirmedAt: null,
     });
+    await setDoc(doc(db, 'parent_student_links', 'parent-a_student-a'), {
+      parentUid: 'parent-a', studentId: 'student-a', instituteId: 'institute-a',
+      relationship: 'parent', active: true, createdAt: new Date(), updatedAt: new Date(),
+      createdBy: 'admin-a', revokedAt: null, revokedBy: null, sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_student_links', 'parent-b_student-b'), {
+      parentUid: 'parent-b', studentId: 'student-b', instituteId: 'institute-b',
+      relationship: 'parent', active: false, createdAt: new Date(), updatedAt: new Date(),
+      createdBy: 'admin-b', revokedAt: new Date(), revokedBy: 'admin-b', sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_student_links', 'parent-a_student-b'), {
+      parentUid: 'parent-a', studentId: 'student-b', instituteId: 'institute-a',
+      relationship: 'parent', active: false, createdAt: new Date(), updatedAt: new Date(),
+      createdBy: 'admin-a', revokedAt: new Date(), revokedBy: 'admin-a', sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_access_scopes', 'parent-a'), {
+      parentUid: 'parent-a', active: true, studentIds: ['student-a'],
+      classIds: ['class-a'], instituteIds: ['institute-a'], updatedAt: new Date(),
+    });
+    await setDoc(doc(db, 'parent_access_scopes', 'inactive-parent'), {
+      parentUid: 'inactive-parent', active: true, studentIds: ['student-a'],
+      classIds: ['class-a'], instituteIds: ['institute-a'], updatedAt: new Date(),
+    });
+    await setDoc(doc(db, 'parent_student_profiles', 'student-a'), {
+      studentId: 'student-a', instituteId: 'institute-a', fullName: 'Student A',
+      studentNumber: 'STU-A', grade: '10', active: true, classIds: ['class-a'],
+      publicProfileImageUrl: null, updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_student_profiles', 'student-b'), {
+      studentId: 'student-b', instituteId: 'institute-b', fullName: 'Student B',
+      studentNumber: 'STU-B', grade: '10', active: true, classIds: ['class-b'],
+      publicProfileImageUrl: null, updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_class_profiles', 'class-a'), {
+      classId: 'class-a', instituteId: 'institute-a', className: 'Math A', subject: 'Math',
+      grade: '10', teacherDisplayName: 'Teacher A', room: 'Room 1',
+      normalSchedule: {}, effectiveSchedule: null, active: true, updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_class_profiles', 'class-b'), {
+      classId: 'class-b', instituteId: 'institute-b', className: 'Math B', subject: 'Math',
+      grade: '10', teacherDisplayName: 'Teacher B', room: 'Room 2',
+      normalSchedule: {}, effectiveSchedule: null, active: true, updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_attendance_summaries', 'student-a_2026-08-01_class-a'), {
+      summaryId: 'student-a_2026-08-01_class-a', studentId: 'student-a',
+      instituteId: 'institute-a', classId: 'class-a', attendanceDate: new Date('2026-08-01'),
+      status: 'present', entryTime: new Date(), exitTime: null, late: false,
+      currentPresenceState: 'inside', updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_attendance_summaries', 'student-b_2026-08-01_class-b'), {
+      summaryId: 'student-b_2026-08-01_class-b', studentId: 'student-b',
+      instituteId: 'institute-b', classId: 'class-b', attendanceDate: new Date('2026-08-01'),
+      status: 'present', entryTime: new Date(), exitTime: null, late: false,
+      currentPresenceState: 'inside', updatedAt: new Date(), sourceVersion: 1,
+    });
+    const future = new Date('2099-01-01T00:00:00Z');
+    const past = new Date('2020-01-01T00:00:00Z');
+    for (const [id, targetType, students, classes, active, expiresAt, instituteId = 'institute-a'] of [
+      ['notice-institute', 'instituteParents', [], [], true, future],
+      ['notice-student', 'student', ['student-a'], [], true, future],
+      ['notice-class', 'class', [], ['class-a'], true, future],
+      ['notice-unrelated', 'student', ['student-b'], [], true, future, 'institute-b'],
+      ['notice-inactive', 'instituteParents', [], [], false, future],
+      ['notice-expired', 'instituteParents', [], [], true, past],
+    ]) await setDoc(doc(db, 'parent_notices', id), {
+      noticeId: id, instituteId, title: id, message: 'Safe parent notice', priority: 'normal',
+      publishedAt: new Date(), expiresAt, active, targetType,
+      targetStudentIds: students, targetClassIds: classes, updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'parent_notices', 'notice-future-published'), {
+      noticeId: 'notice-future-published', instituteId: 'institute-a',
+      title: 'Future notice', message: 'Not published yet', priority: 'normal',
+      publishedAt: future, expiresAt: null, active: true,
+      targetType: 'instituteParents', targetStudentIds: [], targetClassIds: [],
+      updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'institute_public_profiles', 'institute-a'), {
+      instituteId: 'institute-a', displayName: 'Institute A', logoUrl: null,
+      publicPhone: null, publicEmail: null, publicAddress: null,
+      status: 'active', updatedAt: new Date(), sourceVersion: 1,
+    });
+    await setDoc(doc(db, 'institute_public_profiles', 'institute-b'), {
+      instituteId: 'institute-b', displayName: 'Institute B', logoUrl: null,
+      publicPhone: null, publicEmail: null, publicAddress: null,
+      status: 'active', updatedAt: new Date(), sourceVersion: 1,
+    });
   });
 });
 
@@ -179,6 +270,14 @@ test('user cannot change own role, institute, or active state', async () => {
   await assertFails(updateDoc(own, { instituteId: 'institute-b' }));
   const inactive = doc(environment.authenticatedContext('inactive-teacher').firestore(), 'users', 'inactive-teacher');
   await assertFails(updateDoc(inactive, { active: true }));
+  const parent = doc(
+    environment.authenticatedContext('parent-a').firestore(),
+    'users',
+    'parent-a',
+  );
+  await assertFails(updateDoc(parent, {
+    parentLinkedStudentIds: ['student-b'],
+  }));
 });
 
 test('teacher first login atomically clears password flag, activates status, and audits', async () => {
@@ -440,6 +539,25 @@ test('Institute Admin can create a class only with a same-institute code reserva
   }));
 });
 
+test('Institute Admin transaction creates class, reservation, and audit without reading a missing reservation', async () => {
+  const db = environment.authenticatedContext('admin-a').firestore();
+  await assertSucceeds(runTransaction(db, async transaction => {
+    transaction.set(doc(db, 'classes', 'class-transaction'), {
+      ...academicClass({ id: 'class-transaction', code: 'TXN-CLASS', teacherIds: [] }),
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+    transaction.set(doc(db, 'class_codes', 'institute-a_TXN-CLASS'), {
+      instituteId: 'institute-a', classCode: 'TXN-CLASS', classId: 'class-transaction',
+      createdAt: serverTimestamp(), createdBy: 'admin-a',
+    });
+    transaction.set(doc(db, 'audit_logs', 'class-transaction-audit'), {
+      auditLogId: 'class-transaction-audit', actorUid: 'admin-a', actorRole: 'instituteAdmin',
+      instituteId: 'institute-a', action: 'classCreated', targetType: 'academicClass',
+      targetId: 'class-transaction', summary: 'Class created', createdAt: serverTimestamp(),
+    });
+  }));
+});
+
 test('teacher class creation requires canCreateClasses and one assigned self', async () => {
   const deniedDb = environment.authenticatedContext('teacher-a').firestore();
   const denied = writeBatch(deniedDb);
@@ -607,6 +725,25 @@ test('Institute Admin creates student only with unique reservation and cannot cr
   await assertFails(getDoc(doc(db, 'students', 'student-b')));
 });
 
+test('Institute Admin transaction creates student, number reservation, and audit without reading a missing reservation', async () => {
+  const db = environment.authenticatedContext('admin-a').firestore();
+  await assertSucceeds(runTransaction(db, async transaction => {
+    transaction.set(doc(db, 'students', 'student-transaction'), {
+      ...student({ id: 'student-transaction', number: 'STU-TXN' }),
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+    transaction.set(doc(db, 'student_numbers', 'institute-a_STU-TXN'), {
+      instituteId: 'institute-a', studentNumber: 'STU-TXN', studentId: 'student-transaction',
+      createdAt: serverTimestamp(), createdBy: 'admin-a',
+    });
+    transaction.set(doc(db, 'audit_logs', 'student-transaction-audit'), {
+      auditLogId: 'student-transaction-audit', actorUid: 'admin-a', actorRole: 'instituteAdmin',
+      instituteId: 'institute-a', action: 'studentCreated', targetType: 'student',
+      targetId: 'student-transaction', summary: 'Student created', createdAt: serverTimestamp(),
+    });
+  }));
+});
+
 test('parent and fake Super Admin cannot access academic management data', async () => {
   await assertFails(getDoc(doc(environment.authenticatedContext('parent-a').firestore(), 'classes', 'class-a')));
   await assertFails(getDoc(doc(environment.authenticatedContext('fake-super').firestore(), 'classes', 'class-a')));
@@ -657,4 +794,257 @@ test('attendance and QR audits can be appended only by the trusted backend', asy
   await assertFails(setDoc(doc(db, 'qr_tokens', 'new-hash'), {
     studentId: 'student-a', instituteId: 'institute-a', enabled: true, version: 2,
   }));
+});
+
+test('only an active parent can read their own active link', async () => {
+  const parent = environment.authenticatedContext('parent-a').firestore();
+  await assertSucceeds(getDoc(doc(parent, 'parent_student_links', 'parent-a_student-a')));
+  await assertFails(getDoc(doc(parent, 'parent_student_links', 'parent-b_student-b')));
+  await assertFails(getDoc(doc(parent, 'parent_student_links', 'parent-a_student-b')));
+  await assertFails(getDoc(doc(environment.authenticatedContext('inactive-parent').firestore(), 'parent_student_links', 'parent-a_student-a')));
+  await assertFails(getDoc(doc(environment.authenticatedContext('teacher-a').firestore(), 'parent_student_links', 'parent-a_student-a')));
+});
+
+test('parent clients cannot create update or delete parent links', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  const existing = doc(db, 'parent_student_links', 'parent-a_student-a');
+  await assertFails(setDoc(doc(db, 'parent_student_links', 'parent-a_student-b'), {
+    parentUid: 'parent-a', studentId: 'student-b', instituteId: 'institute-b', active: true,
+  }));
+  await assertFails(updateDoc(existing, { active: false }));
+  await assertFails(deleteDoc(existing));
+});
+
+test('parent reads only linked safe student projection and never raw student data', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  await assertSucceeds(getDoc(doc(db, 'parent_student_profiles', 'student-a')));
+  await assertFails(getDoc(doc(db, 'parent_student_profiles', 'student-b')));
+  await assertFails(getDoc(doc(db, 'students', 'student-a')));
+  await assertFails(updateDoc(doc(db, 'parent_student_profiles', 'student-a'), { fullName: 'Changed' }));
+});
+
+test('parent reads only active linked class projections and cannot write them', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  await assertSucceeds(getDoc(doc(db, 'parent_class_profiles', 'class-a')));
+  await assertFails(getDoc(doc(db, 'parent_class_profiles', 'class-b')));
+  await assertFails(updateDoc(doc(db, 'parent_class_profiles', 'class-a'), { room: 'Changed' }));
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'parent_class_profiles', 'class-a'), { active: false });
+  });
+  await assertFails(getDoc(doc(db, 'parent_class_profiles', 'class-a')));
+});
+
+test('parent reads linked attendance summaries but all parent attendance writes fail', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  const own = doc(db, 'parent_attendance_summaries', 'student-a_2026-08-01_class-a');
+  await assertSucceeds(getDoc(own));
+  await assertFails(getDoc(doc(db, 'parent_attendance_summaries', 'student-b_2026-08-01_class-b')));
+  await assertFails(setDoc(doc(db, 'parent_attendance_summaries', 'forged'), {
+    studentId: 'student-a', instituteId: 'institute-a', classId: 'class-a', status: 'present',
+  }));
+  await assertFails(updateDoc(own, { status: 'absent' }));
+  await assertFails(deleteDoc(own));
+});
+
+test('parent repository attendance query is bounded to the linked student', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  const attendance = query(
+    collection(db, 'parent_attendance_summaries'),
+    where('studentId', '==', 'student-a'),
+    where('instituteId', '==', 'institute-a'),
+    orderBy('attendanceDate', 'desc'),
+    where('attendanceDate', '>=', new Date('2026-08-01T00:00:00Z')),
+    where('attendanceDate', '<=', new Date('2026-08-01T23:59:59Z')),
+    limit(100),
+  );
+  const result = await assertSucceeds(getDocs(attendance));
+  assert.equal(result.size, 1);
+  assert.equal(result.docs[0].data().studentId, 'student-a');
+});
+
+test('parent reads only active non-expired notices targeted to their scope', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  for (const id of ['notice-institute', 'notice-student', 'notice-class']) {
+    await assertSucceeds(getDoc(doc(db, 'parent_notices', id)));
+  }
+  for (const id of [
+    'notice-unrelated', 'notice-inactive', 'notice-expired',
+    'notice-future-published',
+  ]) {
+    await assertFails(getDoc(doc(db, 'parent_notices', id)));
+  }
+  await assertFails(setDoc(doc(db, 'parent_notices', 'forged'), { active: true }));
+  await assertFails(updateDoc(doc(db, 'parent_notices', 'notice-student'), { title: 'Changed' }));
+  await assertFails(deleteDoc(doc(db, 'parent_notices', 'notice-student')));
+});
+
+test('parent reads only linked public institute identity and never private institute data', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  await assertSucceeds(getDoc(doc(db, 'institute_public_profiles', 'institute-a')));
+  await assertFails(getDoc(doc(db, 'institute_public_profiles', 'institute-b')));
+  await assertFails(getDoc(doc(db, 'institutes', 'institute-a')));
+  await assertFails(updateDoc(doc(db, 'institute_public_profiles', 'institute-a'), { displayName: 'Changed' }));
+});
+
+test('suspended institute blocks every parent-facing projection', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'institutes', 'institute-a'), { active: false, status: 'suspended' });
+  });
+  const db = environment.authenticatedContext('parent-a').firestore();
+  for (const [collectionName, id] of [
+    ['parent_student_links', 'parent-a_student-a'],
+    ['parent_student_profiles', 'student-a'],
+    ['parent_class_profiles', 'class-a'],
+    ['parent_attendance_summaries', 'student-a_2026-08-01_class-a'],
+    ['parent_notices', 'notice-institute'],
+    ['institute_public_profiles', 'institute-a'],
+  ]) await assertFails(getDoc(doc(db, collectionName, id)));
+});
+
+test('revoking the final link immediately removes every derived read scope', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await updateDoc(doc(db, 'parent_student_links', 'parent-a_student-a'), {
+      active: false, revokedAt: new Date(), revokedBy: 'admin-a',
+    });
+    await updateDoc(doc(db, 'parent_access_scopes', 'parent-a'), {
+      active: false, studentIds: [], classIds: [], instituteIds: [], updatedAt: new Date(),
+    });
+  });
+  const db = environment.authenticatedContext('parent-a').firestore();
+  for (const [collectionName, id] of [
+    ['parent_student_profiles', 'student-a'],
+    ['parent_class_profiles', 'class-a'],
+    ['parent_attendance_summaries', 'student-a_2026-08-01_class-a'],
+    ['parent_notices', 'notice-student'],
+    ['parent_notices', 'notice-class'],
+    ['institute_public_profiles', 'institute-a'],
+  ]) await assertFails(getDoc(doc(db, collectionName, id)));
+});
+
+test('backend callable state is inaccessible to every mobile role', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'backend_rate_limits', 'rate-a'), { actorHash: 'hash', count: 1 });
+    await setDoc(doc(db, 'backend_idempotency', 'request-a'), { actorHash: 'hash', status: 'completed' });
+    await setDoc(doc(db, 'backend_callable_audits', 'audit-a'), { actorHash: 'hash', outcome: 'allowed' });
+  });
+  const contexts = [
+    environment.unauthenticatedContext(),
+    environment.authenticatedContext('parent-a'),
+    environment.authenticatedContext('teacher-a'),
+    environment.authenticatedContext('admin-a'),
+    environment.authenticatedContext('real-super', { superAdmin: true }),
+  ];
+  for (const context of contexts) {
+    const db = context.firestore();
+    for (const [collectionName, id] of [
+      ['backend_rate_limits', 'rate-a'],
+      ['backend_idempotency', 'request-a'],
+      ['backend_callable_audits', 'audit-a'],
+    ]) {
+      await assertFails(getDoc(doc(db, collectionName, id)));
+      await assertFails(setDoc(doc(db, collectionName, `forged-${id}`), { actorHash: 'forged' }));
+    }
+  }
+});
+
+test('notification device records are callable-only for every mobile role', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'notification_devices', 'parent-a', 'tokens', 'device-a'), {
+      uid: 'parent-a', tokenId: 'device-a', protectedToken: 'never-readable', active: true,
+    });
+  });
+  const contexts = [
+    environment.unauthenticatedContext(), environment.authenticatedContext('parent-a'),
+    environment.authenticatedContext('teacher-a'), environment.authenticatedContext('admin-a'),
+    environment.authenticatedContext('real-super', { superAdmin: true }),
+  ];
+  for (const context of contexts) {
+    const db = context.firestore(); const own = doc(db, 'notification_devices', 'parent-a', 'tokens', 'device-a');
+    await assertFails(getDoc(own));
+    await assertFails(setDoc(own, { uid: 'parent-a', protectedToken: 'forged' }));
+    await assertFails(updateDoc(own, { active: false }));
+    await assertFails(deleteDoc(own));
+  }
+});
+
+test('notification preferences remain callable-only for every mobile role', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'notification_preferences', 'parent-a'), {
+      uid: 'parent-a', notices: true, securityAlerts: true,
+    });
+  });
+  const contexts = [
+    environment.unauthenticatedContext(), environment.authenticatedContext('parent-a'),
+    environment.authenticatedContext('teacher-a'), environment.authenticatedContext('admin-a'),
+    environment.authenticatedContext('real-super', { superAdmin: true }),
+  ];
+  for (const context of contexts) {
+    const db = context.firestore(); const own = doc(db, 'notification_preferences', 'parent-a');
+    await assertFails(getDoc(own));
+    await assertFails(setDoc(own, { uid: 'parent-a', notices: false }));
+    await assertFails(updateDoc(own, { notices: false }));
+    await assertFails(deleteDoc(own));
+  }
+});
+
+test('institute join codes, requests, and memberships are callable-only for every mobile role', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'institute_join_codes', 'DEMO-2026'), { instituteId: 'institute-a', active: true });
+    await setDoc(doc(db, 'institute_memberships', 'teacher-a_institute-a'), { uid: 'teacher-a', instituteId: 'institute-a', role: 'teacher', status: 'active' });
+    await setDoc(doc(db, 'institute_join_requests', 'request-a'), { uid: 'teacher-a', instituteId: 'institute-a', requestedRole: 'teacher', status: 'pending' });
+  });
+  const contexts = [
+    environment.unauthenticatedContext(), environment.authenticatedContext('parent-a'),
+    environment.authenticatedContext('teacher-a'), environment.authenticatedContext('admin-a'),
+    environment.authenticatedContext('real-super', { superAdmin: true }),
+  ];
+  for (const context of contexts) {
+    const db = context.firestore();
+    for (const [collectionName, id] of [
+      ['institute_join_codes', 'DEMO-2026'], ['institute_memberships', 'teacher-a_institute-a'],
+      ['institute_join_requests', 'request-a'],
+    ]) {
+      const ref = doc(db, collectionName, id);
+      await assertFails(getDoc(ref));
+      await assertFails(setDoc(ref, { forged: true }));
+      await assertFails(deleteDoc(ref));
+    }
+  }
+});
+
+test('SMS trusted queues are denied to every mobile role', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'sms_outbox', 'message-a'), { protectedPhone: 'backend-only' });
+  });
+  for (const context of [environment.unauthenticatedContext(), environment.authenticatedContext('parent-a'), environment.authenticatedContext('teacher-a'), environment.authenticatedContext('admin-a'), environment.authenticatedContext('real-super', { superAdmin: true })]) {
+    const db = context.firestore(); const ref = doc(db, 'sms_outbox', 'message-a');
+    await assertFails(getDoc(ref)); await assertFails(setDoc(ref, { protectedPhone: 'forged' })); await assertFails(deleteDoc(ref));
+  }
+});
+
+test('a linked active parent can record only minimal SMS consent for their child', async () => {
+  const db = environment.authenticatedContext('parent-a').firestore();
+  const consent = doc(db, 'student_sms_consents', 'student-a');
+  await assertSucceeds(setDoc(consent, {
+    studentId: 'student-a', instituteId: 'institute-a', granted: true, updatedAt: serverTimestamp(),
+  }));
+  await assertFails(setDoc(doc(db, 'student_sms_consents', 'student-b'), {
+    studentId: 'student-b', instituteId: 'institute-b', granted: true, updatedAt: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(consent, { protectedPhone: '+94770000000' }));
+});
+
+test('SMS consent does not broaden unrelated parent or inactive-parent access', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'student_sms_consents', 'student-a'), {
+      studentId: 'student-a', instituteId: 'institute-a', granted: true, updatedAt: new Date(),
+    });
+  });
+  await assertFails(getDoc(doc(environment.authenticatedContext('parent-b').firestore(), 'student_sms_consents', 'student-a')));
+  await assertFails(getDoc(doc(environment.authenticatedContext('inactive-parent').firestore(), 'student_sms_consents', 'student-a')));
+  await assertSucceeds(getDoc(doc(environment.authenticatedContext('admin-a').firestore(), 'student_sms_consents', 'student-a')));
+  await assertFails(getDoc(doc(environment.authenticatedContext('admin-b').firestore(), 'student_sms_consents', 'student-a')));
 });

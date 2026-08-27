@@ -1,7 +1,10 @@
 import 'package:attendiqo_shared/attendiqo_shared.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_components.dart';
+import '../../../services/sms_worker_client.dart';
 import '../../../theme/attendiqo_theme.dart';
 import '../../password_recovery/data/firebase_managed_password_reset_service.dart';
 import '../../teacher_management/presentation/teacher_management_screens.dart';
@@ -96,9 +99,7 @@ class SuperAdminDashboard extends StatelessWidget {
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
+                    OverviewMetricGrid(
                       children: [
                         _Metric(
                           'Total institutes',
@@ -242,25 +243,22 @@ class _Metric extends StatelessWidget {
   final int value;
   final IconData icon;
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 170,
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: AttendiqoTheme.primary),
-            const SizedBox(height: 12),
-            Text(
-              '$value',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(label),
-          ],
-        ),
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AttendiqoTheme.primary),
+          const SizedBox(height: 12),
+          Text(
+            '$value',
+            style: Theme.of(
+              context,
+            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          Text(label),
+        ],
       ),
     ),
   );
@@ -775,6 +773,42 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
   late final limit = TextEditingController(
     text: '${widget.institute.smsMonthlyLimit}',
   );
+  SmsWorkerClient? _smsWorkerClient;
+  bool saving = false;
+  bool loadingStudents = true;
+  bool sendingNotice = false;
+  String? selectedStudentId;
+  List<_SmsStudentChoice> students = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStudents();
+  }
+
+  Future<void> _loadStudents() async {
+    try {
+      final result = await FirebaseFirestore.instance
+          .collection(FirestoreCollections.students)
+          .where('instituteId', isEqualTo: widget.institute.instituteId)
+          .where('active', isEqualTo: true)
+          .limit(100)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        students =
+            result.docs
+                .map((doc) => _SmsStudentChoice.fromData(doc.id, doc.data()))
+                .whereType<_SmsStudentChoice>()
+                .toList()
+              ..sort((a, b) => a.label.compareTo(b.label));
+        loadingStudents = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => loadingStudents = false);
+    }
+  }
+
   @override
   void dispose() {
     limit.dispose();
@@ -788,7 +822,7 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
       padding: const EdgeInsets.all(20),
       children: [
         const Text(
-          'SMS is optional and no provider is configured. Usage is read-only.',
+          'SMS is optional. Settings are saved through the secure SMS Worker.',
         ),
         SwitchListTile(
           title: const Text('Allow SMS'),
@@ -810,29 +844,145 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
           trailing: Text('${widget.institute.smsUsedThisMonth}'),
           subtitle: const Text('Managed by trusted backend; not editable'),
         ),
+        const SizedBox(height: 20),
+        const Text(
+          'One-time validation notice',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'The Worker checks parent SMS consent, institute scope and the monthly limit before any delivery. No phone number is shown here.',
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          initialValue: selectedStudentId,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Consented student'),
+          hint: Text(
+            loadingStudents ? 'Loading students...' : 'Select a student',
+          ),
+          items: students
+              .map(
+                (student) => DropdownMenuItem(
+                  value: student.studentId,
+                  child: Text(student.label),
+                ),
+              )
+              .toList(),
+          onChanged: loadingStudents
+              ? null
+              : (value) => setState(() => selectedStudentId = value),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed:
+              loadingStudents || sendingNotice || selectedStudentId == null
+              ? null
+              : () async {
+                  setState(() => sendingNotice = true);
+                  final response = await (_smsWorkerClient ??= SmsWorkerClient())
+                      .requestManualEvent(
+                        studentId: selectedStudentId!,
+                        eventType: 'importantNotice',
+                        sourceEventKey:
+                            'manual-${DateTime.now().toUtc().microsecondsSinceEpoch}',
+                      );
+                  if (!context.mounted) return;
+                  setState(() => sendingNotice = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        response.isSuccess
+                            ? 'Notice request accepted. Check the approved test phone once.'
+                            : (response.message ??
+                                  'The notice could not be sent.'),
+                      ),
+                    ),
+                  );
+                },
+          icon: const Icon(Icons.sms_outlined),
+          label: Text(
+            sendingNotice ? 'Requesting...' : 'Send one important notice',
+          ),
+        ),
         FilledButton(
-          onPressed: () async {
-            final parsed = int.tryParse(limit.text);
-            if (parsed == null || parsed < 0) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Enter a valid monthly limit.')),
-              );
-              return;
-            }
-            final updated = widget.institute.copyWith(
-              smsEnabled: enabled,
-              smsMonthlyLimit: parsed,
-              allowPaidExtraSms: enabled && paid,
-            );
-            if (await widget.controller.save(updated) && context.mounted) {
-              Navigator.pop(context, updated);
-            }
-          },
-          child: const Text('Save SMS settings'),
+          onPressed: saving
+              ? null
+              : () async {
+                  final parsed = int.tryParse(limit.text);
+                  if (parsed == null || parsed < 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Enter a valid monthly limit.'),
+                      ),
+                    );
+                    return;
+                  }
+                  setState(() => saving = true);
+                  final response =
+                      await (_smsWorkerClient ??= SmsWorkerClient())
+                          .updateSettings(
+                            instituteIdForSuperAdmin:
+                                widget.institute.instituteId,
+                            enabled: enabled,
+                            monthlyLimit: parsed,
+                            allowedEvents: const [
+                              'importantNotice',
+                              'emergencyNotice',
+                              'monthlyPaymentReminder',
+                            ],
+                          );
+                  if (!response.isSuccess) {
+                    if (context.mounted) {
+                      setState(() => saving = false);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            response.message ?? 'Unable to save SMS settings.',
+                          ),
+                        ),
+                      );
+                    }
+                    return;
+                  }
+                  final updated = widget.institute.copyWith(
+                    smsEnabled: enabled,
+                    smsMonthlyLimit: parsed,
+                    allowPaidExtraSms: enabled && paid,
+                  );
+                  final saved = await widget.controller.save(updated);
+                  if (!context.mounted) return;
+                  setState(() => saving = false);
+                  if (saved) {
+                    Navigator.pop(context, updated);
+                  }
+                },
+          child: Text(saving ? 'Saving...' : 'Save SMS settings'),
         ),
       ],
     ),
   );
+}
+
+class _SmsStudentChoice {
+  const _SmsStudentChoice({required this.studentId, required this.label});
+  final String studentId;
+  final String label;
+
+  static _SmsStudentChoice? fromData(
+    String studentId,
+    Map<String, dynamic> data,
+  ) {
+    final name = data['fullName'];
+    final number = data['studentNumber'];
+    if (name is! String || name.trim().isEmpty || number is! String) {
+      return null;
+    }
+    return _SmsStudentChoice(
+      studentId: studentId,
+      label: '${name.trim()} • ${number.trim()}',
+    );
+  }
 }
 
 class InstituteAdminListScreen extends StatefulWidget {

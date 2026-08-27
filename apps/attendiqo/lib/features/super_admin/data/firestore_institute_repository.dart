@@ -42,6 +42,16 @@ class FirestoreInstituteRepository implements InstituteRepository {
   }
 
   @override
+  Future<Institute?> fetchInstituteById(String instituteId) async {
+    final result = await _db
+        .collection(FirestoreCollections.institutes)
+        .doc(instituteId)
+        .get();
+    if (!result.exists) return null;
+    return _instituteFrom(result.id, result.data() ?? const {});
+  }
+
+  @override
   Future<Institute> createInstitute(Institute institute) async {
     final instituteRef = _db
         .collection(FirestoreCollections.institutes)

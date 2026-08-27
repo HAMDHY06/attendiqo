@@ -244,3 +244,112 @@ class ConnectAccessBlockedScreen extends StatelessWidget {
     ),
   );
 }
+
+class ParentMembershipAccessScreen extends StatefulWidget {
+  const ParentMembershipAccessScreen({super.key, required this.controller});
+  final AuthenticationController controller;
+  @override
+  State<ParentMembershipAccessScreen> createState() =>
+      _ParentMembershipAccessScreenState();
+}
+
+class _ParentMembershipAccessScreenState
+    extends State<ParentMembershipAccessScreen> {
+  final _code = TextEditingController();
+  bool _busy = false;
+  String? _message;
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  MembershipWorkflowRepository? get _workflow =>
+      widget.controller.repository is MembershipWorkflowRepository
+      ? widget.controller.repository as MembershipWorkflowRepository
+      : null;
+  String get _statusMessage {
+    final status = widget.controller.state.memberships
+        .where((item) => item.status != InstituteMembershipStatus.active)
+        .map((item) => item.status)
+        .firstOrNull;
+    return switch (status) {
+      InstituteMembershipStatus.pending =>
+        'Your Parent Connect request is pending approval.',
+      InstituteMembershipStatus.rejected =>
+        'Your Parent Connect request was not approved. You may submit a new request.',
+      InstituteMembershipStatus.suspended =>
+        'Your Parent Connect access is suspended. Contact the institute.',
+      InstituteMembershipStatus.revoked =>
+        'Your Parent Connect access was revoked. Request access again if appropriate.',
+      _ =>
+        'Enter your institute join code to request Parent Connect access. Approval is required.',
+    };
+  }
+
+  Future<void> _request() async {
+    final workflow = _workflow;
+    if (workflow == null || _code.text.trim().isEmpty) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await workflow.requestMembership(
+        joinCode: _code.text,
+        requestedRole: UserRole.parent,
+      );
+      if (mounted) {
+        setState(
+          () => _message =
+              'Your Parent Connect request is pending Institute Admin approval.',
+        );
+      }
+    } on MembershipWorkerFailure catch (error) {
+      if (mounted) setState(() => _message = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Parent Connect approval')),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Icon(Icons.family_restroom_outlined, size: 64),
+              const SizedBox(height: 16),
+              Text(_message ?? _statusMessage, textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _code,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Institute join code',
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _busy ? null : _request,
+                child: Text(
+                  _busy ? 'Submitting…' : 'Request Parent Connect access',
+                ),
+              ),
+              TextButton(
+                onPressed: _busy ? null : widget.controller.signOut,
+                child: const Text('Sign out'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}

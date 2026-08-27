@@ -218,6 +218,10 @@ abstract interface class AuditLogRepository {
 
 abstract interface class InstituteRepository implements AuditLogRepository {
   Future<List<Institute>> fetchInstitutes();
+
+  /// Resolves one institute only when the caller is already authorised by the
+  /// repository and Firestore Rules. It is used for compact identity displays.
+  Future<Institute?> fetchInstituteById(String instituteId);
   Future<Institute> createInstitute(Institute institute);
   Future<void> updateInstitute(Institute institute);
   Future<List<UserProfile>> fetchInstituteAdmins(String instituteId);

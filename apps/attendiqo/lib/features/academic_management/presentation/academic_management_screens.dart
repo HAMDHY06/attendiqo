@@ -26,33 +26,51 @@ class AcademicManagementArea extends StatefulWidget {
 }
 
 class _AcademicManagementAreaState extends State<AcademicManagementArea> {
-  late final AcademicManagementController controller;
+  AcademicManagementController? controller;
   late final bool ownsController;
 
   @override
   void initState() {
     super.initState();
     ownsController = widget.controller == null;
-    controller =
-        widget.controller ??
-        AcademicManagementController(
-          actor: widget.actor ?? widget.authController!.state.profile!,
-          repository: FirestoreAcademicRepository(),
-        );
-    controller.load();
+    final actor = widget.actor ?? widget.authController?.state.profile;
+    controller = widget.controller;
+    if (controller == null && actor != null) {
+      controller = AcademicManagementController(
+        actor: actor,
+        repository: FirestoreAcademicRepository(),
+      );
+    }
+    controller?.load();
   }
 
   @override
   void dispose() {
-    if (ownsController) controller.dispose();
+    if (ownsController) controller?.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => AcademicManagementShell(
-    controller: controller,
-    onLogout: widget.onLogout ?? widget.authController!.signOut,
-  );
+  Widget build(BuildContext context) {
+    final currentController = controller;
+    if (currentController == null) {
+      return const AppPageScaffold(
+        title: 'Academic management',
+        body: Center(
+          child: AppStatePanel.error(
+            title: 'Profile unavailable',
+            message:
+                'Your account profile could not be loaded. Please sign in again.',
+          ),
+        ),
+      );
+    }
+    return AcademicManagementShell(
+      controller: currentController,
+      onLogout:
+          widget.onLogout ?? widget.authController?.signOut ?? () async {},
+    );
+  }
 }
 
 class AcademicManagementShell extends StatefulWidget {
@@ -425,9 +443,7 @@ class AcademicDashboardScreen extends StatelessWidget {
           ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+        OverviewMetricGrid(
           children: [
             StatisticCard(
               label: 'Active classes',
@@ -1789,86 +1805,113 @@ class _CreateStudentScreenState extends State<CreateStudentScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Create student')),
-    body: Form(
-      key: formKey,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text(
-            'Student photographs are not collected.',
-            style: TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: number,
-            textCapitalization: TextCapitalization.characters,
-            decoration: const InputDecoration(labelText: 'Student number'),
-            validator: StudentNumberValidator.validate,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: name,
-            decoration: const InputDecoration(labelText: 'Full name'),
-            validator: _required,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: address,
-            decoration: const InputDecoration(labelText: 'Address'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: parent,
-            decoration: const InputDecoration(
-              labelText: 'Primary parent/guardian name',
+    body: AnimatedBuilder(
+      animation: widget.controller,
+      builder: (_, _) => Form(
+        key: formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text(
+              'Student photographs are not collected.',
+              style: TextStyle(fontWeight: FontWeight.w600),
             ),
-            validator: _required,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: mobile,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Primary parent mobile',
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: number,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(labelText: 'Student number'),
+              validator: StudentNumberValidator.validate,
             ),
-            validator: MobileNumberValidator.validatePrimary,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: secondParent,
-            decoration: const InputDecoration(
-              labelText: 'Secondary parent/guardian name (optional)',
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: name,
+              decoration: const InputDecoration(labelText: 'Full name'),
+              validator: _required,
             ),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: secondMobile,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Secondary mobile (optional)',
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: address,
+              decoration: const InputDecoration(labelText: 'Address'),
             ),
-            validator: MobileNumberValidator.validateSecondary,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: email,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(
-              labelText: 'Parent email (optional)',
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: parent,
+              decoration: const InputDecoration(
+                labelText: 'Primary parent/guardian name',
+              ),
+              validator: _required,
             ),
-            validator: FieldValidators.optionalEmail,
-          ),
-          const SizedBox(height: 20),
-          FilledButton(
-            onPressed: widget.controller.saving ? null : _submit,
-            child: const Text('Create student'),
-          ),
-        ],
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: mobile,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Primary parent mobile',
+              ),
+              validator: MobileNumberValidator.validatePrimary,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: secondParent,
+              decoration: const InputDecoration(
+                labelText: 'Secondary parent/guardian name (optional)',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: secondMobile,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Secondary mobile (optional)',
+              ),
+              validator: MobileNumberValidator.validateSecondary,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: email,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Parent email (optional)',
+              ),
+              validator: FieldValidators.optionalEmail,
+            ),
+            const SizedBox(height: 20),
+            if (widget.controller.error != null) ...[
+              Semantics(
+                liveRegion: true,
+                child: Card(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      widget.controller.error!,
+                      key: const Key('createStudentError'),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            FilledButton(
+              key: const Key('submitStudentButton'),
+              onPressed: widget.controller.saving ? null : _submit,
+              child: widget.controller.saving
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Create student'),
+            ),
+          ],
+        ),
       ),
     ),
   );
 
   Future<void> _submit() async {
+    if (widget.controller.saving) return;
+    widget.controller.clearError();
     if (!(formKey.currentState?.validate() ?? false)) return;
     final student = await widget.controller.createStudent(
       studentNumber: number.text,
@@ -1880,7 +1923,18 @@ class _CreateStudentScreenState extends State<CreateStudentScreen> {
       parentEmail: email.text,
       address: address.text,
     );
-    if (student != null && mounted) Navigator.pop(context);
+    if (!mounted) return;
+    if (student != null) {
+      Navigator.pop(context, student);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.controller.error ?? 'The student could not be created.',
+          ),
+        ),
+      );
+    }
   }
 }
 

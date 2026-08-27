@@ -8,16 +8,54 @@ import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class FakeRepository implements AuthenticationRepository {
-  FakeRepository({this.initialUser, this.profile, this.resetFailure});
+class FakeRepository
+    implements
+        AuthenticationRepository,
+        ActiveMembershipRepository,
+        MembershipWorkflowRepository {
+  FakeRepository({
+    this.initialUser,
+    this.profile,
+    this.resetFailure,
+    this.noMembership = false,
+    this.membershipOverrides = const [],
+    this.reviewable = const [],
+  });
   final AuthenticatedUser? initialUser;
   UserProfile? profile;
   final AuthFailure? resetFailure;
+  final bool noMembership;
+  List<InstituteMembership> membershipOverrides;
+  List<InstituteJoinRequest> reviewable;
+  final reviewed = <String>[];
   final changes = StreamController<AuthenticatedUser?>.broadcast();
   bool resetRequested = false;
   Completer<void>? resetCompleter;
   bool signedOut = false;
   bool passwordRequirementCleared = false;
+  UserRole? requestedRole;
+
+  @override
+  Future<List<InstituteMembership>> loadOwnMemberships(
+    String authenticatedUid,
+  ) async {
+    if (membershipOverrides.isNotEmpty) return membershipOverrides;
+    final current = profile;
+    if (noMembership ||
+        current == null ||
+        current.role == UserRole.superAdmin) {
+      return const [];
+    }
+    return [
+      InstituteMembership(
+        uid: authenticatedUid,
+        instituteId: 'institute-1',
+        role: current.role,
+        status: InstituteMembershipStatus.active,
+        requestedAt: DateTime.utc(2026),
+      ),
+    ];
+  }
 
   @override
   Stream<AuthenticatedUser?> authStateChanges() async* {
@@ -62,6 +100,42 @@ class FakeRepository implements AuthenticationRepository {
 
   @override
   Future<void> updatePassword(String newPassword) async {}
+  @override
+  Future<InstituteJoinRequest> requestMembership({
+    required String joinCode,
+    required UserRole requestedRole,
+  }) async {
+    this.requestedRole = requestedRole;
+    return InstituteJoinRequest(
+      requestId: 'safe',
+      uid: '',
+      instituteId: '',
+      requestedRole: requestedRole,
+      status: InstituteMembershipStatus.pending,
+      requestedAt: DateTime.utc(2026),
+    );
+  }
+
+  @override
+  Future<List<InstituteJoinRequest>> loadOwnRequests() async => const [];
+  @override
+  Future<List<InstituteJoinRequest>> loadReviewableRequests() async =>
+      reviewable;
+  @override
+  Future<InstituteMembershipStatus> reviewRequest({
+    required String requestId,
+    required bool approve,
+  }) async {
+    reviewed.add('$requestId:$approve');
+    return approve
+        ? InstituteMembershipStatus.active
+        : InstituteMembershipStatus.rejected;
+  }
+
+  @override
+  Future<InstituteMembershipStatus> revokeMembership(
+    String membershipId,
+  ) async => InstituteMembershipStatus.revoked;
   Future<void> dispose() => changes.close();
 }
 
@@ -99,6 +173,249 @@ void main() {
     expect(find.text('Email is required'), findsOneWidget);
     expect(find.text('Password is required'), findsOneWidget);
     await repository.dispose();
+  });
+
+  testWidgets('blocked management session submits a Teacher join request', (
+    tester,
+  ) async {
+    final repository = FakeRepository(
+      initialUser: const AuthenticatedUser(uid: 'u1', email: 'u@x.com'),
+      profile: testProfile(UserRole.teacher, active: true),
+      noMembership: true,
+    );
+    await tester.pumpWidget(AttendiqoApp(authenticationRepository: repository));
+    await tester.pumpAndSettle();
+    expect(find.byType(MembershipAccessScreen), findsOneWidget);
+    await tester.enterText(find.byType(TextField).first, 'ABCDEF');
+    await tester.tap(find.text('Request access'));
+    await tester.pump();
+    expect(repository.requestedRole, UserRole.teacher);
+    await repository.dispose();
+  });
+
+  testWidgets(
+    'membership status UI is explicit for pending rejected suspended and revoked',
+    (tester) async {
+      for (final status in [
+        InstituteMembershipStatus.pending,
+        InstituteMembershipStatus.rejected,
+        InstituteMembershipStatus.suspended,
+        InstituteMembershipStatus.revoked,
+      ]) {
+        final repository = FakeRepository(
+          initialUser: const AuthenticatedUser(uid: 'u1', email: 'u@x.com'),
+          profile: testProfile(UserRole.teacher),
+          membershipOverrides: [
+            InstituteMembership(
+              uid: 'u1',
+              instituteId: 'institute-1',
+              role: UserRole.teacher,
+              status: status,
+              requestedAt: DateTime.utc(2026),
+            ),
+          ],
+        );
+        await tester.pumpWidget(
+          AttendiqoApp(authenticationRepository: repository),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(MembershipAccessScreen), findsOneWidget);
+        await repository.dispose();
+      }
+    },
+  );
+
+  testWidgets('Super Admin can review Institute Admin request', (tester) async {
+    final repository = FakeRepository(
+      initialUser: const AuthenticatedUser(uid: 'u1', email: 's@x.com'),
+      profile: testProfile(UserRole.superAdmin),
+      reviewable: [
+        InstituteJoinRequest(
+          requestId: 'r1',
+          uid: '',
+          instituteId: 'i1',
+          requestedRole: UserRole.instituteAdmin,
+          status: InstituteMembershipStatus.pending,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.management,
+    )..start();
+    await tester.pumpWidget(
+      MaterialApp(home: MembershipReviewScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('instituteAdmin request'), findsOneWidget);
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+    expect(repository.reviewed, contains('r1:true'));
+    controller.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets(
+    'Institute Admin review is selected-institute scoped and excludes admin requests',
+    (tester) async {
+      final repository = FakeRepository(
+        initialUser: const AuthenticatedUser(uid: 'u1', email: 'a@x.com'),
+        profile: testProfile(UserRole.instituteAdmin),
+        reviewable: [
+          InstituteJoinRequest(
+            requestId: 'teacher',
+            uid: '',
+            instituteId: 'institute-1',
+            requestedRole: UserRole.teacher,
+            status: InstituteMembershipStatus.pending,
+            requestedAt: DateTime.utc(2026),
+          ),
+          InstituteJoinRequest(
+            requestId: 'parent',
+            uid: '',
+            instituteId: 'institute-1',
+            requestedRole: UserRole.parent,
+            status: InstituteMembershipStatus.pending,
+            requestedAt: DateTime.utc(2026),
+          ),
+          InstituteJoinRequest(
+            requestId: 'other',
+            uid: '',
+            instituteId: 'i2',
+            requestedRole: UserRole.teacher,
+            status: InstituteMembershipStatus.pending,
+            requestedAt: DateTime.utc(2026),
+          ),
+          InstituteJoinRequest(
+            requestId: 'admin',
+            uid: '',
+            instituteId: 'institute-1',
+            requestedRole: UserRole.instituteAdmin,
+            status: InstituteMembershipStatus.pending,
+            requestedAt: DateTime.utc(2026),
+          ),
+        ],
+      );
+      final controller = AuthenticationController(
+        repository: repository,
+        audience: AppAudience.management,
+      )..start();
+      await tester.pumpWidget(
+        MaterialApp(home: MembershipReviewScreen(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('teacher request'), findsOneWidget);
+      expect(find.text('parent request'), findsOneWidget);
+      expect(find.text('instituteAdmin request'), findsNothing);
+      controller.dispose();
+      await repository.dispose();
+    },
+  );
+
+  testWidgets('Super Admin rejection uses the Worker workflow decision', (
+    tester,
+  ) async {
+    final repository = FakeRepository(
+      initialUser: const AuthenticatedUser(uid: 'u1', email: 's@x.com'),
+      profile: testProfile(UserRole.superAdmin),
+      reviewable: [
+        InstituteJoinRequest(
+          requestId: 'reject',
+          uid: '',
+          instituteId: 'i1',
+          requestedRole: UserRole.instituteAdmin,
+          status: InstituteMembershipStatus.pending,
+          requestedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+    final controller = AuthenticationController(
+      repository: repository,
+      audience: AppAudience.management,
+    )..start();
+    await tester.pumpWidget(
+      MaterialApp(home: MembershipReviewScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reject'));
+    await tester.pumpAndSettle();
+    expect(repository.reviewed, contains('reject:false'));
+    controller.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets(
+    'Institute Admin sends approve and reject decisions only for same-institute Teacher and Parent requests',
+    (tester) async {
+      final repository = FakeRepository(
+        initialUser: const AuthenticatedUser(uid: 'u1', email: 'a@x.com'),
+        profile: testProfile(UserRole.instituteAdmin),
+        reviewable: [
+          InstituteJoinRequest(
+            requestId: 'teacher',
+            uid: '',
+            instituteId: 'institute-1',
+            requestedRole: UserRole.teacher,
+            status: InstituteMembershipStatus.pending,
+            requestedAt: DateTime.utc(2026),
+          ),
+          InstituteJoinRequest(
+            requestId: 'parent',
+            uid: '',
+            instituteId: 'institute-1',
+            requestedRole: UserRole.parent,
+            status: InstituteMembershipStatus.pending,
+            requestedAt: DateTime.utc(2026),
+          ),
+        ],
+      );
+      final controller = AuthenticationController(
+        repository: repository,
+        audience: AppAudience.management,
+      )..start();
+      await tester.pumpWidget(
+        MaterialApp(home: MembershipReviewScreen(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Approve').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Reject').last);
+      await tester.pumpAndSettle();
+      expect(
+        repository.reviewed,
+        containsAll(['teacher:true', 'parent:false']),
+      );
+      controller.dispose();
+      await repository.dispose();
+    },
+  );
+
+  testWidgets('Teacher and Parent cannot access reviewer controls', (
+    tester,
+  ) async {
+    for (final role in [UserRole.teacher, UserRole.parent]) {
+      final repository = FakeRepository(
+        initialUser: const AuthenticatedUser(uid: 'u1', email: 'x@x.com'),
+        profile: testProfile(role),
+      );
+      final controller = AuthenticationController(
+        repository: repository,
+        audience: AppAudience.management,
+      )..start();
+      await tester.pumpWidget(
+        MaterialApp(home: MembershipReviewScreen(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Membership approvals are unavailable for this account.'),
+        findsOneWidget,
+      );
+      expect(find.text('Approve'), findsNothing);
+      expect(find.text('Reject'), findsNothing);
+      controller.dispose();
+      await repository.dispose();
+    }
   });
 
   testWidgets('forgot-password shows validation, loading, and safe success', (
@@ -193,9 +510,12 @@ void main() {
       final title = switch (role) {
         UserRole.superAdmin => 'Super Admin dashboard',
         UserRole.instituteAdmin => 'Institute Admin dashboard',
-        _ => 'Teacher dashboard',
+        _ => 'Home',
       };
-      expect(find.text(title), findsOneWidget);
+      expect(
+        find.text(title),
+        role == UserRole.teacher ? findsWidgets : findsOneWidget,
+      );
       await repository.dispose();
     }
   });
@@ -278,7 +598,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(repository.passwordRequirementCleared, isTrue);
     expect(repository.profile?.teacherStatus, TeacherStatus.active);
-    expect(find.text('Teacher dashboard'), findsWidgets);
+    expect(find.text('Home'), findsWidgets);
     await repository.dispose();
   });
 

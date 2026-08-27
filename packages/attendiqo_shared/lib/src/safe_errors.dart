@@ -18,6 +18,8 @@ abstract final class SafeErrorMapper {
       'The service is unavailable. Check your connection and try again.',
     'duplicate-class-code' =>
       'That class code is already used in this institute.',
+    'duplicate-student-number' =>
+      'That student number is already used in this institute.',
     'duplicate-email' => 'An account already uses this email address.',
     'duplicate-employee-number' =>
       'That employee number is already used in this institute.',

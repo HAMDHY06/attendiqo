@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:attendiqo/features/academic_management/application/academic_management_controller.dart';
 import 'package:attendiqo/features/academic_management/presentation/academic_management_screens.dart';
+import 'package:attendiqo/core/widgets/app_components.dart';
 import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +17,10 @@ class _MemoryAcademicRepository implements AcademicRepository {
   Completer<void>? createBlocker;
   int createCalls = 0;
   int classFetches = 0;
+  Failure? createStudentFailure;
+  Completer<void>? createStudentBlocker;
+  int createStudentCalls = 0;
+  int studentFetches = 0;
 
   @override
   Future<List<AcademicClass>> fetchClasses(UserProfile actor) async =>
@@ -39,9 +44,12 @@ class _MemoryAcademicRepository implements AcademicRepository {
 
   @override
   Future<List<Student>> fetchStudents(UserProfile actor) async =>
-      List.of(students);
+      (studentFetches++, List.of(students)).$2;
   @override
   Future<Student> createStudent(Student value, UserProfile actor) async {
+    createStudentCalls++;
+    if (createStudentBlocker != null) await createStudentBlocker!.future;
+    if (createStudentFailure != null) throw createStudentFailure!;
     students.add(value);
     return value;
   }
@@ -139,6 +147,26 @@ void main() {
     expect(controller.visibleClasses.single.name, 'Beta');
   });
 
+  testWidgets('overview metric grid always uses two columns', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: OverviewMetricGrid(
+            children: [
+              StatisticCard(label: 'One', value: '1', icon: Icons.one_k),
+              StatisticCard(label: 'Two', value: '2', icon: Icons.two_k),
+              StatisticCard(label: 'Three', value: '3', icon: Icons.three_k),
+            ],
+          ),
+        ),
+      ),
+    );
+    final grid = tester.widget<GridView>(find.byType(GridView));
+    final delegate =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    expect(delegate.crossAxisCount, 2);
+  });
+
   test('student enrolment overlap requires explicit reason', () async {
     final repository = _MemoryAcademicRepository();
     final first = makeClass('CLS-A', 'Alpha', AcademicClassStatus.active);
@@ -191,6 +219,139 @@ void main() {
     );
   });
 
+  test('student creation safely normalizes null optional fields', () async {
+    final repository = _MemoryAcademicRepository();
+    final controller = AcademicManagementController(
+      actor: actor,
+      repository: repository,
+    );
+    final student = await controller.createStudent(
+      studentNumber: 'STU-NEW',
+      fullName: 'Student New',
+      primaryParentName: 'Primary Parent',
+      primaryParentMobile: '0771234567',
+    );
+    expect(student, isNotNull);
+    expect(student!.secondaryParentMobile, isNull);
+    expect(student.emergencyContactMobile, isNull);
+    expect(repository.createStudentCalls, 1);
+    expect(controller.error, isNull);
+  });
+
+  test(
+    'student creation with a missing institute is safe and visible',
+    () async {
+      final superAdminWithoutInstitute = UserProfile(
+        uid: 'super-a',
+        email: 'super@example.com',
+        displayName: 'Super',
+        role: UserRole.superAdmin,
+        instituteId: null,
+        active: true,
+        mustChangePassword: false,
+        createdAt: now,
+        createdBy: 'system',
+        updatedAt: now,
+      );
+      final controller = AcademicManagementController(
+        actor: superAdminWithoutInstitute,
+        repository: _MemoryAcademicRepository(),
+      );
+      final student = await controller.createStudent(
+        studentNumber: 'STU-NEW',
+        fullName: 'Student New',
+        primaryParentName: 'Primary Parent',
+        primaryParentMobile: '0771234567',
+      );
+      expect(student, isNull);
+      expect(controller.error, 'Your account is not assigned to an institute.');
+    },
+  );
+
+  test('student creation rejects a missing profile identity safely', () async {
+    final missingIdentity = UserProfile(
+      uid: '',
+      email: 'missing@example.com',
+      displayName: 'Missing',
+      role: UserRole.instituteAdmin,
+      instituteId: 'institute-a',
+      active: true,
+      mustChangePassword: false,
+      createdAt: now,
+      createdBy: 'system',
+      updatedAt: now,
+    );
+    final controller = AcademicManagementController(
+      actor: missingIdentity,
+      repository: _MemoryAcademicRepository(),
+    );
+    final student = await controller.createStudent(
+      studentNumber: 'STU-MISSING',
+      fullName: 'Student Missing',
+      primaryParentName: 'Primary Parent',
+      primaryParentMobile: '0771234567',
+    );
+    expect(student, isNull);
+    expect(
+      controller.error,
+      'Your account profile is unavailable. Please sign in again.',
+    );
+  });
+
+  test(
+    'student creation blocks a duplicate submission and resets loading',
+    () async {
+      final repository = _MemoryAcademicRepository()
+        ..createStudentBlocker = Completer<void>();
+      final controller = AcademicManagementController(
+        actor: actor,
+        repository: repository,
+      );
+      final first = controller.createStudent(
+        studentNumber: 'STU-ONE',
+        fullName: 'Student One',
+        primaryParentName: 'Primary Parent',
+        primaryParentMobile: '0771234567',
+      );
+      expect(controller.saving, isTrue);
+      expect(
+        await controller.createStudent(
+          studentNumber: 'STU-TWO',
+          fullName: 'Student Two',
+          primaryParentName: 'Primary Parent',
+          primaryParentMobile: '0771234567',
+        ),
+        isNull,
+      );
+      expect(repository.createStudentCalls, 1);
+      repository.createStudentBlocker!.complete();
+      expect(await first, isNotNull);
+      expect(controller.saving, isFalse);
+    },
+  );
+
+  test('student creation maps duplicate numbers to a safe error', () async {
+    final repository = _MemoryAcademicRepository()
+      ..createStudentFailure = const Failure(
+        'FirebaseException: permission-denied internal detail',
+        code: 'duplicate-student-number',
+      );
+    final controller = AcademicManagementController(
+      actor: actor,
+      repository: repository,
+    );
+    final student = await controller.createStudent(
+      studentNumber: 'STU-DUP',
+      fullName: 'Student Duplicate',
+      primaryParentName: 'Primary Parent',
+      primaryParentMobile: '0771234567',
+    );
+    expect(student, isNull);
+    expect(controller.error, contains('already used'));
+    expect(controller.error, isNot(contains('FirebaseException')));
+    expect(controller.saving, isFalse);
+  });
+
   testWidgets(
     'academic shell shows empty states and reaches create-class form',
     (tester) async {
@@ -223,6 +384,59 @@ void main() {
       await tester.pump();
       expect(find.text('Class code is required'), findsOneWidget);
       expect(find.text('Class name is required'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'student form validates required fields and shows safe failures',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _MemoryAcademicRepository()
+        ..createStudentFailure = const Failure(
+          'FirebaseException: permission-denied raw detail',
+          code: 'permission-denied',
+        );
+      final controller = AcademicManagementController(
+        actor: actor,
+        repository: repository,
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: CreateStudentScreen(controller: controller)),
+      );
+      await tester.tap(find.byKey(const Key('submitStudentButton')));
+      await tester.pump();
+      expect(find.text('Student number is required'), findsOneWidget);
+      expect(find.text('This field is required'), findsNWidgets(2));
+      expect(
+        find.text('Primary parent mobile number is required'),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Student number'),
+        'STU-UI',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Full name'),
+        'Student UI',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Primary parent/guardian name'),
+        'Primary Parent',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Primary parent mobile'),
+        '0771234567',
+      );
+      await tester.ensureVisible(find.byKey(const Key('submitStudentButton')));
+      await tester.tap(find.byKey(const Key('submitStudentButton')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('createStudentError')), findsOneWidget);
+      expect(find.textContaining('do not have permission'), findsWidgets);
+      expect(find.textContaining('FirebaseException'), findsNothing);
+      expect(find.text('Student UI'), findsOneWidget);
+      expect(controller.saving, isFalse);
     },
   );
 

@@ -2,7 +2,11 @@ import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-class FirebaseAuthenticationRepository implements AuthenticationRepository {
+class FirebaseAuthenticationRepository
+    implements
+        AuthenticationRepository,
+        ActiveMembershipRepository,
+        MembershipWorkflowRepository {
   FirebaseAuthenticationRepository({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
@@ -10,6 +14,57 @@ class FirebaseAuthenticationRepository implements AuthenticationRepository {
        _firestore = firestore ?? FirebaseFirestore.instance;
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
+
+  MembershipWorkerClient get _membershipWorker => MembershipWorkerClient(
+    tokenProvider: () async => _auth.currentUser == null
+        ? null
+        : await _auth.currentUser!.getIdToken(true),
+    baseUrl: const String.fromEnvironment(
+      'MEMBERSHIP_WORKER_URL',
+      defaultValue: String.fromEnvironment('SMS_WORKER_URL'),
+    ),
+  );
+
+  @override
+  Future<List<InstituteMembership>> loadOwnMemberships(
+    String authenticatedUid,
+  ) async {
+    final user = _auth.currentUser;
+    if (user == null || user.uid != authenticatedUid) {
+      throw const AuthFailure(
+        AuthFailureCode.invalidCredentials,
+        'Please sign in again to view institute access.',
+      );
+    }
+    try {
+      return await _membershipWorker.loadOwnMemberships(authenticatedUid);
+    } on MembershipWorkerFailure catch (error) {
+      throw AuthFailure(AuthFailureCode.network, error.message);
+    }
+  }
+
+  @override
+  Future<InstituteJoinRequest> requestMembership({
+    required String joinCode,
+    required UserRole requestedRole,
+  }) => _membershipWorker.requestMembership(
+    joinCode: joinCode,
+    requestedRole: requestedRole,
+  );
+  @override
+  Future<List<InstituteJoinRequest>> loadOwnRequests() =>
+      _membershipWorker.loadOwnRequests();
+  @override
+  Future<List<InstituteJoinRequest>> loadReviewableRequests() =>
+      _membershipWorker.loadReviewableRequests();
+  @override
+  Future<InstituteMembershipStatus> reviewRequest({
+    required String requestId,
+    required bool approve,
+  }) => _membershipWorker.reviewRequest(requestId: requestId, approve: approve);
+  @override
+  Future<InstituteMembershipStatus> revokeMembership(String membershipId) =>
+      _membershipWorker.revokeMembership(membershipId);
 
   @override
   Stream<AuthenticatedUser?> authStateChanges() => _auth.authStateChanges().map(
