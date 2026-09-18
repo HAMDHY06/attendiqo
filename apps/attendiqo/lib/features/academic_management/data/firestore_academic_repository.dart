@@ -2,10 +2,27 @@ import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
-class FirestoreAcademicRepository implements AcademicRepository {
-  FirestoreAcademicRepository({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+import '../../../services/student_worker_service.dart';
+
+class FirestoreAcademicRepository
+    implements AcademicRepository, TrustedTeacherStudentRepository {
+  FirestoreAcademicRepository({
+    FirebaseFirestore? firestore,
+    StudentWorkerService? studentWorkerService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _studentWorkerService = studentWorkerService ?? StudentWorkerService();
   final FirebaseFirestore _firestore;
+  final StudentWorkerService _studentWorkerService;
+
+  @override
+  bool get trustedTeacherStudentAccessAvailable => true;
+
+  @override
+  String? takeLastCreatedQrPayload() {
+    final value = _studentWorkerService.lastCreatedQrPayload;
+    _studentWorkerService.lastCreatedQrPayload = null;
+    return value;
+  }
 
   @override
   Future<List<UserProfile>> fetchTeachersForAcademic(UserProfile actor) async {
@@ -356,7 +373,14 @@ class FirestoreAcademicRepository implements AcademicRepository {
   Future<List<Student>> fetchStudents(UserProfile actor) async {
     // Full student profiles include parent contacts and intentionally remain
     // unavailable to direct teacher queries until a trusted redacted view exists.
-    if (actor.role == UserRole.teacher) return const [];
+    if (actor.role == UserRole.teacher) {
+      final permissions = actor.effectiveTeacherPermissions;
+      if ((!permissions.canAddStudents && !permissions.canEditStudents) ||
+          !permissions.canViewParentContacts) {
+        return const [];
+      }
+      return _studentWorkerService.list();
+    }
     Query<Map<String, dynamic>> query = _firestore.collection(
       FirestoreCollections.students,
     );
@@ -375,9 +399,22 @@ class FirestoreAcademicRepository implements AcademicRepository {
   }
 
   @override
-  Future<Student> createStudent(Student value, UserProfile actor) async {
+  Future<Student> createStudent(
+    Student value,
+    UserProfile actor, {
+    String? targetClassId,
+  }) async {
     final validation = value.validate();
     if (validation != null) throw Failure(validation, code: 'invalid-input');
+    if (actor.role == UserRole.teacher) {
+      if (targetClassId == null || targetClassId.isEmpty) {
+        throw const Failure(
+          'Select one of your assigned classes.',
+          code: 'invalid-input',
+        );
+      }
+      return _studentWorkerService.create(value, targetClassId);
+    }
     if (!AcademicAuthorization.canCreateStudent(actor, value.instituteId)) {
       throw const Failure(
         'Student creation requires Institute Admin access or a trusted service.',
@@ -479,6 +516,10 @@ class FirestoreAcademicRepository implements AcademicRepository {
 
   @override
   Future<void> updateStudent(Student value, UserProfile actor) async {
+    if (actor.role == UserRole.teacher) {
+      await _studentWorkerService.update(value);
+      return;
+    }
     if (!AcademicAuthorization.canEditStudent(actor, value)) {
       throw const Failure(
         'Student editing requires Institute Admin access or a trusted service.',

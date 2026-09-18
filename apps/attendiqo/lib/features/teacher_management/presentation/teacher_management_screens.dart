@@ -1,8 +1,8 @@
 import 'package:attendiqo_shared/attendiqo_shared.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/widgets/app_components.dart';
+import '../../../services/account_provisioning_worker_service.dart';
 import '../../academic_management/application/academic_management_controller.dart';
 import '../../academic_management/data/firestore_academic_repository.dart';
 import '../../academic_management/presentation/academic_management_screens.dart';
@@ -53,9 +53,7 @@ class _TeacherManagementAreaState extends State<TeacherManagementArea> {
         TeacherManagementController(
           actor: widget.authController.state.profile!,
           repository: FirestoreTeacherRepository(),
-          provisioningService: kDebugMode
-              ? MockTeacherProvisioningService()
-              : const UnavailableTeacherProvisioningService(),
+          provisioningService: AccountProvisioningWorkerService(),
           passwordResetService: FirebaseManagedPasswordResetService(),
           verifiedSuperAdminClaim:
               widget.authController.state.profile!.role == UserRole.superAdmin,
@@ -754,7 +752,7 @@ class _CreateTeacherScreenState extends State<CreateTeacherScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'New teachers are active, pending first login, and must replace the temporary password. Development builds use a local mock until the trusted backend is deployed.',
+              'New teachers are created through the protected account service, start active, and must replace the one-time temporary password at first login.',
             ),
             const SizedBox(height: 20),
             FilledButton(

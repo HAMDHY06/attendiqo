@@ -1,15 +1,21 @@
 import 'dart:convert';
 
+import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 /// Non-secret Worker client. The endpoint is a public routing value supplied
-/// with --dart-define=SMS_WORKER_URL; credentials stay in the Worker.
+/// as a public app setting; credentials stay in the Worker.
 class SmsWorkerClient {
   SmsWorkerClient({FirebaseAuth? auth, http.Client? client, String? endpoint})
     : _auth = auth ?? FirebaseAuth.instance,
       _client = client ?? http.Client(),
-      _endpoint = endpoint ?? const String.fromEnvironment('SMS_WORKER_URL');
+      _endpoint =
+          endpoint ??
+          const String.fromEnvironment(
+            'SMS_WORKER_URL',
+            defaultValue: AttendiqoServiceEndpoints.workerBaseUrl,
+          );
 
   final FirebaseAuth _auth;
   final http.Client _client;

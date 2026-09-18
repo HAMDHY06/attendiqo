@@ -1,6 +1,6 @@
 # Phase 5–6: academic management and QR attendance
 
-Status: implementation foundation complete; production trusted attendance backend is **not deployed**.
+Status: protected QR and attendance Worker deployed; management app connected.
 
 ## Milestone A
 
@@ -24,7 +24,7 @@ The raw payload is returned once for printing/sharing. Because hashes are one-wa
 
 ### Trusted attendance transaction
 
-Flutter depends on `AttendanceService`. Debug builds use `MockAttendanceService`; release builds use `UnavailableAttendanceService` until a reviewed callable backend exists. `scripts/attendance_backend_reference.mjs` demonstrates the required Admin SDK transaction but is not a deployable function export.
+Flutter depends on `AttendanceService`. Production builds use the Firebase-authenticated Cloudflare Worker at the public Attendiqo service URL; credentials remain server-side. Debug builds can still use the in-memory mock when no Worker endpoint is configured. `scripts/attendance_backend_reference.mjs` remains a review reference for the equivalent Admin SDK transaction.
 
 The trusted service must:
 

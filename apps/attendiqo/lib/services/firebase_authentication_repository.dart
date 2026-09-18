@@ -22,7 +22,7 @@ class FirebaseAuthenticationRepository
         : await _auth.currentUser!.getIdToken(true),
     baseUrl: const String.fromEnvironment(
       'MEMBERSHIP_WORKER_URL',
-      defaultValue: String.fromEnvironment('SMS_WORKER_URL'),
+      defaultValue: AttendiqoServiceEndpoints.workerBaseUrl,
     ),
   );
 

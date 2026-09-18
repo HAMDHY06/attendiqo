@@ -46,7 +46,11 @@ class _MemoryAcademicRepository implements AcademicRepository {
   Future<List<Student>> fetchStudents(UserProfile actor) async =>
       (studentFetches++, List.of(students)).$2;
   @override
-  Future<Student> createStudent(Student value, UserProfile actor) async {
+  Future<Student> createStudent(
+    Student value,
+    UserProfile actor, {
+    String? targetClassId,
+  }) async {
     createStudentCalls++;
     if (createStudentBlocker != null) await createStudentBlocker!.future;
     if (createStudentFailure != null) throw createStudentFailure!;

@@ -1,7 +1,7 @@
 import { AppError, type FirestoreDocument } from './security';
 
 type Json = Record<string, unknown>;
-type ServiceAccount = {
+export type ServiceAccount = {
   project_id: string;
   client_email: string;
   private_key: string;
@@ -15,17 +15,60 @@ const projectId = 'attendiqo-system';
 const readableCollections = new Set([
   'users',
   'institutes',
+  'institute_codes',
   'institute_join_codes',
   'institute_join_requests',
   'institute_memberships',
+  'teacher_employee_numbers',
+  'student_numbers',
   'students',
+  'student_numbers',
   'student_sms_consents',
+  'classes',
+  'class_schedule_changes',
+  'class_students',
+  'attendance_sessions',
+  'attendance_records',
+  'qr_tokens',
+  'parent_student_links',
+  'parent_student_profiles',
+  'parent_class_profiles',
+  'parent_access_scopes',
+  'parent_attendance_summaries',
+  'notification_tokens',
+  'notification_preferences',
 ]);
 const writableCollections = new Set([
+  'institutes',
+  'institute_codes',
   'institute_join_requests',
   'institute_memberships',
   'audit_logs',
+  'students',
+  'qr_tokens',
+  'attendance_sessions',
+  'attendance_records',
+  'attendance_corrections',
+  'users',
+  'class_students',
+  'teacher_employee_numbers',
+  'parent_student_links',
+  'parent_student_profiles',
+  'parent_class_profiles',
+  'parent_access_scopes',
+  'parent_attendance_summaries',
+  'notification_tokens',
+  'notification_preferences',
 ]);
+
+const timestampMarker = '__attendiqoFirestoreTimestamp';
+
+export function firestoreTimestamp(value: string): Json {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
+    throw new AppError(400, 'invalid_timestamp', 'The request contains an invalid time.');
+  }
+  return { [timestampMarker]: value };
+}
 
 function base64Url(bytes: Uint8Array): string {
   let raw = '';
@@ -49,6 +92,7 @@ function assertPath(path: string, writable = false): void {
 function decodeValue(value: unknown): unknown {
   if (!value || typeof value !== 'object') return undefined;
   const item = value as Json;
+  if ('nullValue' in item) return null;
   if ('stringValue' in item) return item.stringValue;
   if ('booleanValue' in item) return item.booleanValue;
   if ('integerValue' in item) return Number(item.integerValue);
@@ -65,23 +109,33 @@ function decodeValue(value: unknown): unknown {
   return undefined;
 }
 
-function encodeValue(value: unknown): Json {
+function encodeValue(value: unknown, fieldName?: string): Json {
+  if (value === null) return { nullValue: null };
+  if (
+    typeof value === 'string' &&
+    /(?:At|Date|dateOfBirth)$/.test(fieldName ?? '') &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
+  ) {
+    return { timestampValue: value };
+  }
   if (typeof value === 'string') return { stringValue: value };
   if (typeof value === 'boolean') return { booleanValue: value };
   if (typeof value === 'number' && Number.isInteger(value)) return { integerValue: String(value) };
   if (typeof value === 'number' && Number.isFinite(value)) return { doubleValue: value };
-  if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeValue) } };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((item) => encodeValue(item)) } };
   if (value && typeof value === 'object') {
-    return { mapValue: { fields: Object.fromEntries(Object.entries(value as Json).map(([key, item]) => [key, encodeValue(item)])) } };
+    const timestamp = (value as Json)[timestampMarker];
+    if (typeof timestamp === 'string') return { timestampValue: timestamp };
+    return { mapValue: { fields: Object.fromEntries(Object.entries(value as Json).map(([key, item]) => [key, encodeValue(item, key)])) } };
   }
   throw new AppError(400, 'invalid_payload', 'The request is invalid.');
 }
 
 function encodeFields(fields: Json): Record<string, Json> {
-  return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, encodeValue(value)]));
+  return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, encodeValue(value, key)]));
 }
 
-function parseAccount(raw: string): ServiceAccount {
+export function parseAccount(raw: string): ServiceAccount {
   try {
     const value = JSON.parse(raw) as Partial<ServiceAccount>;
     if (value.project_id !== projectId || typeof value.client_email !== 'string' || !value.client_email.endsWith('.gserviceaccount.com') || typeof value.private_key !== 'string' || !value.private_key.includes('BEGIN PRIVATE KEY')) {
@@ -93,16 +147,17 @@ function parseAccount(raw: string): ServiceAccount {
   }
 }
 
-async function mintAccessToken(
+export async function mintAccessToken(
   account: ServiceAccount,
   requestFetch: typeof fetch,
   signedAssertionProvider?: () => Promise<string>,
+  scope = 'https://www.googleapis.com/auth/datastore',
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = text64(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claims = text64(JSON.stringify({
     iss: account.client_email,
-    scope: 'https://www.googleapis.com/auth/datastore',
+    scope,
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
     exp: now + 300,
@@ -143,7 +198,17 @@ export type WorkerFirestoreAdmin = {
   queryMemberships(uid: string): Promise<FirestoreDocument[]>;
   queryJoinRequests(field: 'uid' | 'instituteId', value: string): Promise<FirestoreDocument[]>;
   queryPendingInstituteAdminRequests(): Promise<FirestoreDocument[]>;
-  commit(writes: Array<{ path: string; fields: Json; updateTime?: string; createOnly?: boolean }>): Promise<void>;
+  queryAssignments(field: 'classId' | 'studentId', value: string): Promise<FirestoreDocument[]>;
+  queryAttendanceRecords(sessionId: string): Promise<FirestoreDocument[]>;
+  queryStudentsByInstitute(instituteId: string): Promise<FirestoreDocument[]>;
+  queryClassesByTeacher(uid: string): Promise<FirestoreDocument[]>;
+  queryParentLinks(parentUid: string): Promise<FirestoreDocument[]>;
+  queryParentLinksByStudent(studentId: string): Promise<FirestoreDocument[]>;
+  queryNotificationTokens(uid: string): Promise<FirestoreDocument[]>;
+  commit(
+    writes: Array<{ path: string; fields: Json; updateTime?: string; createOnly?: boolean }>,
+    verifies?: Array<{ path: string; updateTime: string }>,
+  ): Promise<void>;
 };
 
 export function createWorkerFirestoreAdmin(
@@ -231,13 +296,124 @@ export function createWorkerFirestoreAdmin(
       const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
       return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, value]) => [key, decodeValue(value)])), updateTime: document.updateTime }] : []);
     },
-    async commit(writes) {
-      if (writes.length == 0 || writes.length > 4) throw new AppError(400, 'invalid_payload', 'The request is invalid.');
+    async queryAssignments(field, value) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'class_students' }], where: { fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: { stringValue: value } } }, limit: 450 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async queryAttendanceRecords(sessionId) {
+      if (!/^[A-Za-z0-9_-]{1,256}$/.test(sessionId)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'attendance_records' }], where: { fieldFilter: { field: { fieldPath: 'sessionId' }, op: 'EQUAL', value: { stringValue: sessionId } } }, limit: 450 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async queryStudentsByInstitute(instituteId) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(instituteId)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'students' }], where: { fieldFilter: { field: { fieldPath: 'instituteId' }, op: 'EQUAL', value: { stringValue: instituteId } } }, limit: 450 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async queryClassesByTeacher(uid) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'classes' }], where: { fieldFilter: { field: { fieldPath: 'teacherIds' }, op: 'ARRAY_CONTAINS', value: { stringValue: uid } } }, limit: 100 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async queryParentLinks(parentUid) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(parentUid)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'parent_student_links' }], where: { fieldFilter: { field: { fieldPath: 'parentUid' }, op: 'EQUAL', value: { stringValue: parentUid } } }, limit: 25 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async queryParentLinksByStudent(studentId) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(studentId)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'parent_student_links' }], where: { fieldFilter: { field: { fieldPath: 'studentId' }, op: 'EQUAL', value: { stringValue: studentId } } }, limit: 25 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async queryNotificationTokens(uid) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new AppError(400, 'invalid_path', 'The request is invalid.');
+      const accessToken = await mintAccessToken(serviceAccount(), requestFetch, testOnly?.signedAssertionProvider);
+      const response = await requestFetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'notification_tokens' }], where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'EQUAL', value: { stringValue: uid } } }, limit: 20 } }),
+        },
+      );
+      if (!response.ok) throw new AppError(503, 'backend_unavailable', 'The trusted service is temporarily unavailable.');
+      const entries = await response.json<Array<{ document?: { fields?: Record<string, unknown>; updateTime?: string } }>>();
+      return entries.flatMap(({ document }) => document ? [{ fields: Object.fromEntries(Object.entries(document.fields ?? {}).map(([key, item]) => [key, decodeValue(item)])), updateTime: document.updateTime }] : []);
+    },
+    async commit(writes, verifies = []) {
+      if (writes.length == 0 || writes.length + verifies.length > 500) throw new AppError(400, 'invalid_payload', 'The request is invalid.');
       for (const write of writes) assertPath(write.path, true);
+      for (const verify of verifies) assertPath(verify.path);
       const response = await authorizedFetch(':commit', {
         method: 'POST',
         body: JSON.stringify({
-          writes: writes.map((write) => ({
+          writes: [
+            ...verifies.map((verify) => ({
+              verify: `projects/${projectId}/databases/(default)/documents/${verify.path}`,
+              currentDocument: { updateTime: verify.updateTime },
+            })),
+            ...writes.map((write) => ({
             update: {
               name: `projects/${projectId}/databases/(default)/documents/${write.path}`,
               fields: encodeFields(write.fields),
@@ -247,7 +423,8 @@ export function createWorkerFirestoreAdmin(
               : write.createOnly
                 ? { exists: false }
                 : undefined,
-          })),
+            })),
+          ],
         }),
       });
       if (!response.ok) throw new AppError(response.status === 409 ? 409 : 503, response.status === 409 ? 'conflict' : 'backend_unavailable', response.status === 409 ? 'The request changed. Try again.' : 'The trusted service is temporarily unavailable.');

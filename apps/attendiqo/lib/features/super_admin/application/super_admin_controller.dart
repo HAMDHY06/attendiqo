@@ -97,6 +97,7 @@ class SuperAdminController extends ChangeNotifier {
     required String contactNumber,
     required String email,
   }) async {
+    error = null;
     final now = DateTime.now().toUtc();
     final value = Institute.newInstitute(
       instituteId: _idFactory(),
@@ -128,6 +129,7 @@ class SuperAdminController extends ChangeNotifier {
   }
 
   Future<bool> save(Institute value) async {
+    error = null;
     try {
       final updated = value.copyWith(
         updatedAt: DateTime.now().toUtc(),
@@ -140,6 +142,10 @@ class SuperAdminController extends ChangeNotifier {
       if (index >= 0) institutes[index] = updated;
       notifyListeners();
       return true;
+    } on Failure catch (failure) {
+      error = failure.message;
+      notifyListeners();
+      return false;
     } catch (_) {
       error = 'Unable to save institute changes.';
       notifyListeners();

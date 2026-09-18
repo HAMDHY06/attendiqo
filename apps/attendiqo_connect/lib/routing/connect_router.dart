@@ -3,12 +3,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../features/authentication/presentation/connect_authentication_screens.dart';
+import '../features/authentication/presentation/parent_registration_screen.dart';
 import '../features/foundation/presentation/connect_screens.dart';
 import '../features/parent/presentation/parent_shell.dart';
 import '../features/parent/data/parent_projection_repository.dart';
+import '../services/firebase_authentication_repository.dart';
 
 abstract final class ConnectRoutes {
   static const forgotPassword = '/forgot-password';
+  static const register = '/register';
   static const settings = '/settings';
 }
 
@@ -22,6 +25,12 @@ abstract final class ConnectRouter {
       ConnectRoutes.forgotPassword => ConnectForgotPasswordScreen(
         controller: controller,
       ),
+      ConnectRoutes.register
+          when controller.repository is ParentAccountWorkflowRepository =>
+        ParentRegistrationScreen(
+          repository:
+              controller.repository as ParentAccountWorkflowRepository,
+        ),
       ConnectRoutes.settings => NotificationSettingsScreen(
         service: notificationService ?? const UnavailableNotificationService(),
       ),
@@ -45,6 +54,9 @@ abstract final class ConnectRouter {
       controller: controller,
       repository: parentRepository,
       notificationDestination: notificationDestination,
+      accountWorkflow: controller.repository is ParentAccountWorkflowRepository
+          ? controller.repository as ParentAccountWorkflowRepository
+          : null,
     ),
     _ => ConnectAccessBlockedScreen(
       message: 'This role is not supported by Attendiqo Connect.',

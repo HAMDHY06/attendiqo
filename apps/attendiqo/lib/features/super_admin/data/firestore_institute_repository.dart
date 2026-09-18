@@ -1,33 +1,18 @@
+import 'dart:convert';
+
 import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
 class FirestoreInstituteRepository implements InstituteRepository {
-  FirestoreInstituteRepository({FirebaseFirestore? firestore})
-    : _db = firestore ?? FirebaseFirestore.instance;
+  FirestoreInstituteRepository({FirebaseFirestore? firestore, FirebaseAuth? auth, http.Client? client})
+    : _db = firestore ?? FirebaseFirestore.instance,
+      _auth = auth ?? FirebaseAuth.instance,
+      _client = client ?? http.Client();
   final FirebaseFirestore _db;
-
-  Map<String, Object?> _instituteData(
-    Institute value, {
-    required Object timestamp,
-  }) => {
-    'instituteId': value.instituteId,
-    'instituteCode': value.instituteCode,
-    'name': value.name,
-    'address': value.address,
-    'contactNumber': value.contactNumber,
-    'email': value.email,
-    'active': value.active,
-    'status': value.status.name,
-    'pushNotificationsEnabled': value.pushNotificationsEnabled,
-    'smsEnabled': value.smsEnabled,
-    'smsMonthlyLimit': value.smsMonthlyLimit,
-    'allowPaidExtraSms': value.allowPaidExtraSms,
-    'smsUsedThisMonth': value.smsUsedThisMonth,
-    'createdAt': timestamp,
-    'createdBy': value.createdBy,
-    'updatedAt': timestamp,
-    'updatedBy': value.updatedBy,
-  };
+  final FirebaseAuth _auth;
+  final http.Client _client;
 
   @override
   Future<List<Institute>> fetchInstitutes() async {
@@ -53,94 +38,37 @@ class FirestoreInstituteRepository implements InstituteRepository {
 
   @override
   Future<Institute> createInstitute(Institute institute) async {
-    final instituteRef = _db
-        .collection(FirestoreCollections.institutes)
-        .doc(institute.instituteId);
-    final codeRef = _db
-        .collection(FirestoreCollections.instituteCodes)
-        .doc(institute.instituteCode);
-    final auditRef = _db.collection(FirestoreCollections.auditLogs).doc();
-    await _db.runTransaction((transaction) async {
-      if ((await transaction.get(codeRef)).exists) {
-        throw const Failure(
-          'Institute code already exists',
-          code: 'duplicate-code',
-        );
-      }
-      transaction.set(codeRef, {
-        'instituteId': institute.instituteId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'createdBy': institute.createdBy,
-      });
-      transaction.set(
-        instituteRef,
-        _instituteData(institute, timestamp: FieldValue.serverTimestamp()),
-      );
-      transaction.set(
-        auditRef,
-        _auditData(
-          auditRef.id,
-          institute.createdBy,
-          institute.instituteId,
-          AuditAction.instituteCreated,
-          AuditTargetType.institute,
-          institute.instituteId,
-          'Institute ${institute.instituteCode} created',
-        ),
-      );
-    });
-    return institute;
+    return _saveThroughWorker('/v1/institutes/create', institute);
   }
 
   @override
   Future<void> updateInstitute(Institute institute) async {
-    final ref = _db
-        .collection(FirestoreCollections.institutes)
-        .doc(institute.instituteId);
-    final auditRef = _db.collection(FirestoreCollections.auditLogs).doc();
-    await _db.runTransaction((transaction) async {
-      final current = await transaction.get(ref);
-      final data = current.data();
-      if (data == null) {
-        throw const Failure('Institute was not found', code: 'not-found');
+    await _saveThroughWorker('/v1/institutes/update', institute);
+  }
+
+  Future<Institute> _saveThroughWorker(String path, Institute value) async {
+    final token = await _auth.currentUser?.getIdToken(true);
+    if (token == null || token.isEmpty) throw const Failure('Sign in again to continue.', code: 'unauthenticated');
+    final payload = {
+      'instituteId': value.instituteId, 'instituteCode': value.instituteCode,
+      'name': value.name, 'address': value.address, 'contactNumber': value.contactNumber,
+      'email': value.email, 'status': value.status.name,
+      'pushNotificationsEnabled': value.pushNotificationsEnabled, 'smsEnabled': value.smsEnabled,
+      'smsMonthlyLimit': value.smsMonthlyLimit, 'allowPaidExtraSms': value.allowPaidExtraSms,
+    };
+    try {
+      final response = await _client.post(Uri.parse('${AttendiqoServiceEndpoints.workerBaseUrl}$path'), headers: {'authorization': 'Bearer $token', 'content-type': 'application/json'}, body: jsonEncode(payload));
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) throw const Failure('The institute service returned an invalid response.', code: 'backend-unavailable');
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Failure(decoded['message'] as String? ?? 'Unable to save the institute.', code: (decoded['error'] as String? ?? 'backend-unavailable').replaceAll('_', '-'));
+      final raw = decoded['institute'];
+      if (raw is! Map<String, dynamic>) throw const Failure('The institute service returned an invalid response.', code: 'backend-unavailable');
+      final normalized = <String, Object?>{};
+      for (final entry in raw.entries) {
+        normalized[entry.key] = (entry.key.endsWith('At') && entry.value is String) ? DateTime.tryParse(entry.value as String) : entry.value;
       }
-      if (data['instituteCode'] != institute.instituteCode) {
-        throw const Failure(
-          'Institute code cannot be changed',
-          code: 'immutable-code',
-        );
-      }
-      final previousStatus = data['status'];
-      final previousSms = data['smsEnabled'];
-      final previousPush = data['pushNotificationsEnabled'];
-      final update =
-          _instituteData(institute, timestamp: FieldValue.serverTimestamp())
-            ..['createdAt'] = data['createdAt']
-            ..['createdBy'] = data['createdBy']
-            ..['smsUsedThisMonth'] = data['smsUsedThisMonth'];
-      transaction.update(ref, update);
-      final action = previousStatus != institute.status.name
-          ? (institute.status == InstituteStatus.active
-                ? AuditAction.instituteActivated
-                : AuditAction.instituteSuspended)
-          : previousSms != institute.smsEnabled
-          ? AuditAction.smsSettingChanged
-          : previousPush != institute.pushNotificationsEnabled
-          ? AuditAction.pushSettingChanged
-          : AuditAction.instituteUpdated;
-      transaction.set(
-        auditRef,
-        _auditData(
-          auditRef.id,
-          institute.updatedBy,
-          institute.instituteId,
-          action,
-          AuditTargetType.institute,
-          institute.instituteId,
-          '${action.name}: ${institute.instituteCode}',
-        ),
-      );
-    });
+      return Institute.tryFromMap(normalized) ?? value;
+    } on Failure { rethrow; } catch (_) { throw const Failure('The institute service is temporarily unavailable.', code: 'backend-unavailable'); }
   }
 
   @override
@@ -171,26 +99,6 @@ class FirestoreInstituteRepository implements InstituteRepository {
         .whereType<AuditLogEntry>()
         .toList();
   }
-
-  Map<String, Object?> _auditData(
-    String auditLogId,
-    String actorUid,
-    String? instituteId,
-    AuditAction action,
-    AuditTargetType targetType,
-    String targetId,
-    String summary,
-  ) => {
-    'auditLogId': auditLogId,
-    'actorUid': actorUid,
-    'actorRole': UserRole.superAdmin.name,
-    'instituteId': instituteId,
-    'action': action.name,
-    'targetType': targetType.name,
-    'targetId': targetId,
-    'summary': summary,
-    'createdAt': FieldValue.serverTimestamp(),
-  };
 
   Institute? _instituteFrom(String id, Map<String, dynamic> raw) =>
       Institute.tryFromMap(_normalize(id, raw, idField: 'instituteId'));

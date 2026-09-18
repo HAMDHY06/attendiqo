@@ -31,6 +31,15 @@ abstract final class FirestoreCollections {
   static const systemSettings = 'system_settings';
 }
 
+/// Public routing values only. Authentication and provider credentials never
+/// belong in the mobile apps and remain protected by the Worker.
+abstract final class AttendiqoServiceEndpoints {
+  static const workerBaseUrl = String.fromEnvironment(
+    'ATTENDIQO_WORKER_URL',
+    defaultValue: 'https://attendiqo-sms-api.hamdhytech-sms.workers.dev',
+  );
+}
+
 abstract final class BrandColors {
   static const attendiqoPrimary = 0xFF4338CA;
   static const attendiqoSecondary = 0xFF2563EB;

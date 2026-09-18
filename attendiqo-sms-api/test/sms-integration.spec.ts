@@ -86,7 +86,7 @@ describe('Worker SMS integration with mocked Text.lk', () => {
       } as unknown as Env,
     );
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: 'unauthenticated', message: 'Sign in to use SMS.' });
+    expect(await response.json()).toEqual({ error: 'unauthenticated', message: 'Sign in to continue.' });
   });
 
   it('rejects an invalid bearer before using the backend-only service credential', async () => {

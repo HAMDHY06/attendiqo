@@ -36,7 +36,15 @@ class AcademicManagementController extends ChangeNotifier {
   bool get canCreateClass => AcademicAuthorization.canCreateClasses(actor);
   bool get canCreateStudentDirectly =>
       actor.instituteId != null &&
-      AcademicAuthorization.canCreateStudent(actor, actor.instituteId!);
+      AcademicAuthorization.canCreateStudent(
+        actor,
+        actor.instituteId!,
+        trustedBackendAvailable:
+            repository is TrustedTeacherStudentRepository &&
+            (repository as TrustedTeacherStudentRepository)
+                .trustedTeacherStudentAccessAvailable,
+      ) &&
+      (!isTeacher || actor.effectiveTeacherPermissions.canViewParentContacts);
   bool get requestsTeacherStudentBackend =>
       isTeacher &&
       (actor.effectiveTeacherPermissions.canAddStudents ||
@@ -52,6 +60,10 @@ class AcademicManagementController extends ChangeNotifier {
     actor,
     value,
     assignedClasses: classes,
+    trustedBackendAvailable:
+        repository is TrustedTeacherStudentRepository &&
+        (repository as TrustedTeacherStudentRepository)
+            .trustedTeacherStudentAccessAvailable,
   );
   bool canAssignStudents(AcademicClass value) =>
       AcademicAuthorization.canAssignStudents(actor, value);
@@ -308,6 +320,7 @@ class AcademicManagementController extends ChangeNotifier {
     String address = '',
     String? emergencyContactName,
     String? emergencyContactMobile,
+    String? targetClassId,
   }) async {
     if (saving) return null;
     if (actor.uid.trim().isEmpty) {
@@ -334,7 +347,15 @@ class AcademicManagementController extends ChangeNotifier {
       notifyListeners();
       return null;
     }
-    if (!AcademicAuthorization.canCreateStudent(actor, instituteId)) {
+    final trusted =
+        repository is TrustedTeacherStudentRepository &&
+        (repository as TrustedTeacherStudentRepository)
+            .trustedTeacherStudentAccessAvailable;
+    if (!AcademicAuthorization.canCreateStudent(
+      actor,
+      instituteId,
+      trustedBackendAvailable: trusted,
+    )) {
       error =
           actor.role == UserRole.teacher &&
               actor.effectiveTeacherPermissions.canAddStudents
@@ -380,7 +401,15 @@ class AcademicManagementController extends ChangeNotifier {
           updatedBy: actor.uid,
         );
         generatedQrPayload = qr.payload;
-        return repository.createStudent(value, actor);
+        final created = await repository.createStudent(
+          value,
+          actor,
+          targetClassId: targetClassId,
+        );
+        if (repository case final TrustedTeacherStudentRepository trustedRepo) {
+          generatedQrPayload = trustedRepo.takeLastCreatedQrPayload();
+        }
+        return created;
       },
       onSuccess: (created) {
         students = [...students, created]
@@ -407,6 +436,10 @@ class AcademicManagementController extends ChangeNotifier {
       actor,
       value,
       assignedClasses: classes,
+      trustedBackendAvailable:
+          repository is TrustedTeacherStudentRepository &&
+          (repository as TrustedTeacherStudentRepository)
+              .trustedTeacherStudentAccessAvailable,
     )) {
       error =
           actor.role == UserRole.teacher &&

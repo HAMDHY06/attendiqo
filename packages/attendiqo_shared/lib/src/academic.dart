@@ -1022,7 +1022,11 @@ abstract interface class AcademicRepository implements AuditLogRepository {
   });
   Future<void> saveScheduleChange(ClassScheduleChange value, UserProfile actor);
   Future<List<Student>> fetchStudents(UserProfile actor);
-  Future<Student> createStudent(Student value, UserProfile actor);
+  Future<Student> createStudent(
+    Student value,
+    UserProfile actor, {
+    String? targetClassId,
+  });
   Future<void> updateStudent(Student value, UserProfile actor);
   Future<List<ClassStudentAssignment>> fetchAssignments(
     UserProfile actor, {
@@ -1030,4 +1034,11 @@ abstract interface class AcademicRepository implements AuditLogRepository {
     String? studentId,
   });
   Future<void> saveAssignment(ClassStudentAssignment value, UserProfile actor);
+}
+
+/// Marker for repositories that enforce teacher student access through a
+/// trusted backend instead of direct access to private student documents.
+abstract interface class TrustedTeacherStudentRepository {
+  bool get trustedTeacherStudentAccessAvailable;
+  String? takeLastCreatedQrPayload();
 }

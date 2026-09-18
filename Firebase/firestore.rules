@@ -879,6 +879,9 @@ service cloud.firestore {
     match /notification_preferences/{uid} {
       allow read, write: if false;
     }
+    match /notification_tokens/{tokenId} {
+      allow read, write: if false;
+    }
 
     // Multi-institute membership is callable-only. A visible join code is an
     // identifier, never a client-readable credential or an access grant.

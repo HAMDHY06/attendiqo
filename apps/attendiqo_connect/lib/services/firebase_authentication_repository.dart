@@ -1,19 +1,42 @@
+import 'dart:convert';
+
 import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+
+abstract interface class ParentAccountWorkflowRepository {
+  Future<void> registerParent({
+    required String displayName,
+    required String mobileNumber,
+    required String email,
+    required String password,
+  });
+
+  Future<void> linkStudent(String studentNumber);
+}
 
 class FirebaseAuthenticationRepository
     implements
         AuthenticationRepository,
         ActiveMembershipRepository,
-        MembershipWorkflowRepository {
+        MembershipWorkflowRepository,
+        ParentAccountWorkflowRepository {
   FirebaseAuthenticationRepository({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
+    http.Client? client,
+    String? workerEndpoint,
   }) : _auth = auth ?? FirebaseAuth.instance,
-       _firestore = firestore ?? FirebaseFirestore.instance;
+       _firestore = firestore ?? FirebaseFirestore.instance,
+       _client = client ?? http.Client(),
+       _workerEndpoint =
+           (workerEndpoint ?? AttendiqoServiceEndpoints.workerBaseUrl)
+               .replaceAll(RegExp(r'/+$'), '');
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
+  final http.Client _client;
+  final String _workerEndpoint;
 
   MembershipWorkerClient get _membershipWorker => MembershipWorkerClient(
     tokenProvider: () async => _auth.currentUser == null
@@ -21,7 +44,7 @@ class FirebaseAuthenticationRepository
         : await _auth.currentUser!.getIdToken(true),
     baseUrl: const String.fromEnvironment(
       'MEMBERSHIP_WORKER_URL',
-      defaultValue: String.fromEnvironment('SMS_WORKER_URL'),
+      defaultValue: AttendiqoServiceEndpoints.workerBaseUrl,
     ),
   );
 
@@ -125,6 +148,99 @@ class FirebaseAuthenticationRepository
   }
 
   @override
+  Future<void> registerParent({
+    required String displayName,
+    required String mobileNumber,
+    required String email,
+    required String password,
+  }) async {
+    User? createdUser;
+    try {
+      final credential = await _auth.createUserWithEmailAndPassword(
+        email: email.trim().toLowerCase(),
+        password: password,
+      );
+      createdUser = credential.user;
+      if (createdUser == null) {
+        throw const AuthFailure(
+          AuthFailureCode.unknown,
+          'Unable to create the parent account. Please try again.',
+        );
+      }
+      await _postWorker('/v1/parents/bootstrap', {
+        'displayName': displayName.trim(),
+        'mobileNumber': MobileNumberValidator.normalize(mobileNumber),
+      });
+      await _auth.signOut();
+    } on FirebaseAuthException catch (error) {
+      throw _mapAuthFailure(error);
+    } on AuthFailure {
+      if (createdUser != null) {
+        await createdUser.delete().catchError((_) {});
+        await _auth.signOut().catchError((_) {});
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> linkStudent(String studentNumber) async {
+    await _postWorker('/v1/parents/link', {
+      'studentNumber': studentNumber.trim().toUpperCase(),
+    });
+  }
+
+  Future<Map<String, dynamic>> _postWorker(
+    String path,
+    Map<String, Object?> payload,
+  ) async {
+    final token = await _auth.currentUser?.getIdToken(true);
+    if (token == null || token.isEmpty) {
+      throw const AuthFailure(
+        AuthFailureCode.invalidCredentials,
+        'Please sign in again.',
+      );
+    }
+    try {
+      final response = await _client.post(
+        Uri.parse('$_workerEndpoint$path'),
+        headers: {
+          'authorization': 'Bearer $token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(payload),
+      );
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) throw const FormatException();
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return decoded;
+      }
+      throw AuthFailure(
+        response.statusCode == 401
+            ? AuthFailureCode.invalidCredentials
+            : response.statusCode == 403
+            ? AuthFailureCode.permissionDenied
+            : AuthFailureCode.unknown,
+        decoded['message'] is String
+            ? decoded['message'] as String
+            : 'Unable to complete the request. Please try again.',
+      );
+    } on AuthFailure {
+      rethrow;
+    } on FormatException {
+      throw const AuthFailure(
+        AuthFailureCode.network,
+        'The secure account service returned an invalid response.',
+      );
+    } on http.ClientException {
+      throw const AuthFailure(
+        AuthFailureCode.network,
+        'Unable to reach the secure account service. Check your connection.',
+      );
+    }
+  }
+
+  @override
   Future<UserProfile?> loadProfile(String uid) async {
     try {
       final snapshot = await _firestore
@@ -208,6 +324,14 @@ class FirebaseAuthenticationRepository
     'user-disabled' => const AuthFailure(
       AuthFailureCode.userDisabled,
       'This account has been disabled. Contact your institute.',
+    ),
+    'email-already-in-use' => const AuthFailure(
+      AuthFailureCode.invalidEmail,
+      'An account already uses this email address.',
+    ),
+    'weak-password' => const AuthFailure(
+      AuthFailureCode.invalidCredentials,
+      'Use a stronger password.',
     ),
     'too-many-requests' => const AuthFailure(
       AuthFailureCode.tooManyRequests,

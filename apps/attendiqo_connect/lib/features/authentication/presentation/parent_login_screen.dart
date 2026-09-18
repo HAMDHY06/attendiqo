@@ -129,6 +129,26 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
                     onPressed: _submit,
                     child: const Text('Log in'),
                   ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    key: const Key('openParentRegistrationButton'),
+                    onPressed: () async {
+                      final created = await Navigator.pushNamed<bool>(
+                        context,
+                        ConnectRoutes.register,
+                      );
+                      if (created == true && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Account created. Sign in to join your institute.',
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    child: const Text('Create parent account'),
+                  ),
                   const SizedBox(height: 20),
                   const Text(
                     'Need help? dev.hamdhytech@gmail.com',

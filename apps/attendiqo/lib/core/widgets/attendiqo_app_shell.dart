@@ -177,12 +177,8 @@ class _AttendiqoAppShellState extends State<AttendiqoAppShell> {
                     icon: const Icon(Icons.how_to_reg_rounded),
                   ),
                 IconButton(
-                  tooltip: 'Notifications (not configured)',
-                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Notifications are not configured yet.'),
-                    ),
-                  ),
+                  tooltip: 'Notification settings',
+                  onPressed: () => Navigator.of(context).pushNamed('/settings'),
                   icon: const Icon(Icons.notifications_none_rounded),
                 ),
                 IconButton(

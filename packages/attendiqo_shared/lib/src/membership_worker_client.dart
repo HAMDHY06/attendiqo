@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'constants.dart';
 import 'enums.dart';
 import 'institute_membership.dart';
 
@@ -14,7 +15,11 @@ class MembershipWorkerClient {
     String? baseUrl,
   }) : _client = client ?? http.Client(),
        _baseUrl =
-           (baseUrl ?? const String.fromEnvironment('MEMBERSHIP_WORKER_URL'))
+           (baseUrl ??
+                   const String.fromEnvironment(
+                     'MEMBERSHIP_WORKER_URL',
+                     defaultValue: AttendiqoServiceEndpoints.workerBaseUrl,
+                   ))
                .replaceAll(RegExp(r'/+$'), '');
 
   final Future<String?> Function() tokenProvider;

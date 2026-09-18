@@ -2,6 +2,7 @@ import { SmsLedger } from './sms-ledger';
 import {
   AppError,
   authenticate,
+  verifyFirebaseToken,
   normalizeSriLankanMobile,
   safeHash,
   type Fetcher,
@@ -9,6 +10,26 @@ import {
   type FirestoreDocument,
 } from './security';
 import { createWorkerFirestoreAdmin, type WorkerFirestoreAdmin } from './worker-firestore-admin';
+import { createWorkerIdentityAdmin } from './worker-identity-admin';
+import { createTeacherStudent, listTeacherStudents, updateTeacherStudent } from './students';
+import { createAttendanceNotifier, deactivateNotificationDevice, registerNotificationDevice } from './notifications';
+import { createInstitute, updateInstitute } from './institutes';
+import {
+  bootstrapParent,
+  createInstituteAdminAccount,
+  createTeacherAccount,
+  disableInstituteAdmin,
+  linkParentStudent,
+} from './accounts';
+import {
+  correctRecord,
+  finishSession,
+  recordManual,
+  recordScan,
+  regenerateQr,
+  setQrEnabled,
+  startSession,
+} from './attendance';
 
 export { SmsLedger };
 
@@ -17,6 +38,7 @@ export interface Env {
   TEXTLK_API_TOKEN: string;
   TEXTLK_SENDER_ID: string;
   FIREBASE_SERVICE_ACCOUNT_JSON: string;
+  FIREBASE_API_KEY: string;
 }
 
 const projectId = 'attendiqo-system';
@@ -47,7 +69,7 @@ function json(status: number, value: Json): Response {
 
 function safeError(error: unknown): Response {
   if (error instanceof AppError) return json(error.status, { error: error.code, message: error.safeMessage });
-  return json(500, { error: 'internal', message: 'The SMS request could not be completed.' });
+  return json(500, { error: 'internal', message: 'The request could not be completed.' });
 }
 
 async function body(request: Request): Promise<Json> {
@@ -80,7 +102,7 @@ async function verifiedUser(
 ): Promise<AuthenticatedUser> {
   const user = await authenticate(request, projectId, firestore.get, requestFetch);
   if (!user.active) throw new AppError(403, 'inactive_account', 'This account is not active.');
-  if (user.role !== 'superAdmin' && user.role !== 'instituteAdmin' && user.role !== 'teacher' && user.role !== 'parent') throw new AppError(403, 'unsupported_role', 'This account is not permitted to use SMS.');
+  if (user.role !== 'superAdmin' && user.role !== 'instituteAdmin' && user.role !== 'teacher' && user.role !== 'parent') throw new AppError(403, 'unsupported_role', 'This account is not permitted to use this service.');
   if (user.role !== 'superAdmin' && user.instituteId) {
     const institute = await firestore.get(`institutes/${user.instituteId}`);
     if (!institute || getField<boolean>(institute, 'active') !== true || getField<string>(institute, 'status') === 'suspended') throw new AppError(403, 'suspended_institute', 'This institute is not active.');
@@ -338,15 +360,38 @@ export async function handle(
   // service-account secret. This keeps public endpoint probes deterministic
   // and ensures unavailable backend credentials cannot mask an auth denial.
   if (!request.headers.get('authorization')?.startsWith('Bearer ')) {
-    return json(401, { error: 'unauthenticated', message: 'Sign in to use SMS.' });
+    return json(401, { error: 'unauthenticated', message: 'Sign in to continue.' });
   }
   const firestore = createWorkerFirestoreAdmin(
     env.FIREBASE_SERVICE_ACCOUNT_JSON,
     requestFetch,
     testOnly,
   );
+  const path = new URL(request.url).pathname;
+  if (path === '/v1/parents/bootstrap') {
+    const token = request.headers.get('authorization')!.slice('Bearer '.length).trim();
+    const verified = await verifyFirebaseToken(token, projectId, requestFetch);
+    return json(200, await bootstrapParent(firestore, verified, await body(request)));
+  }
   const user = await verifiedUser(request, firestore, requestFetch);
   const payload = await body(request);
+  const identity = () => createWorkerIdentityAdmin(env.FIREBASE_SERVICE_ACCOUNT_JSON, env.FIREBASE_API_KEY, requestFetch);
+  const attendanceContext = { firestore, user, payload, notify: createAttendanceNotifier(firestore, env.FIREBASE_SERVICE_ACCOUNT_JSON, requestFetch, testOnly?.signedAssertionProvider) };
+  if (path === '/v1/notifications/register' || path === '/v1/notifications/refresh') return json(200, await registerNotificationDevice(firestore, user, payload));
+  if (path === '/v1/notifications/deactivate') return json(200, await deactivateNotificationDevice(firestore, user, payload));
+  if (path === '/v1/institutes/create') return json(201, await createInstitute({ firestore, user, payload }));
+  if (path === '/v1/institutes/update') return json(200, await updateInstitute({ firestore, user, payload }));
+  if (path === '/v1/students/teacher/list') return json(200, await listTeacherStudents({ firestore, user, payload }));
+  if (path === '/v1/students/teacher/create') return json(201, await createTeacherStudent({ firestore, user, payload }));
+  if (path === '/v1/students/teacher/update') return json(200, await updateTeacherStudent({ firestore, user, payload }));
+  if (new URL(request.url).pathname === '/v1/qr/regenerate') return json(200, await regenerateQr(attendanceContext));
+  if (new URL(request.url).pathname === '/v1/qr/enabled') return json(200, await setQrEnabled(attendanceContext));
+  if (new URL(request.url).pathname === '/v1/attendance/sessions/start') return json(200, await startSession(attendanceContext));
+  if (new URL(request.url).pathname === '/v1/attendance/scans') return json(200, await recordScan(attendanceContext));
+  if (new URL(request.url).pathname === '/v1/attendance/sessions/close') return json(200, await finishSession(attendanceContext, false));
+  if (new URL(request.url).pathname === '/v1/attendance/sessions/cancel') return json(200, await finishSession(attendanceContext, true));
+  if (new URL(request.url).pathname === '/v1/attendance/manual') return json(200, await recordManual(attendanceContext));
+  if (new URL(request.url).pathname === '/v1/attendance/correct') return json(200, await correctRecord(attendanceContext));
   if (new URL(request.url).pathname === '/v1/send') return sendSms(env, firestore, user, payload, requestFetch);
   if (new URL(request.url).pathname === '/v1/memberships/request') return requestMembership(firestore, user, payload);
   if (new URL(request.url).pathname === '/v1/memberships/review') return reviewMembership(firestore, user, payload);
@@ -357,6 +402,10 @@ export async function handle(
     exact(payload, []);
     return listMemberships(firestore, user);
   }
+  if (path === '/v1/accounts/teachers/create') return json(201, await createTeacherAccount({ firestore, identity: identity(), user, payload }));
+  if (path === '/v1/accounts/institute-admins/create') return json(201, await createInstituteAdminAccount({ firestore, identity: identity(), user, payload }));
+  if (path === '/v1/accounts/institute-admins/disable') return json(200, await disableInstituteAdmin({ firestore, identity: identity(), user, payload }));
+  if (path === '/v1/parents/link') return json(200, await linkParentStudent(firestore, user, payload));
   if (new URL(request.url).pathname === '/v1/usage') {
     exact(payload, ['instituteId']); const instituteId = await scopedInstitute(firestore, user, payload.instituteId);
     const value = await env.SMS_LEDGER.getByName(instituteId).fetch('https://ledger/usage', { method: 'POST', body: JSON.stringify({ instituteId, defaultMonthlyLimit }) });
@@ -378,5 +427,18 @@ export async function handle(
 }
 
 export default {
-  fetch: (request, env) => handle(request, env).catch(safeError),
+  fetch: async (request, env) => {
+    try {
+      return await handle(request, env);
+    } catch (error) {
+      const response = safeError(error);
+      console.warn(JSON.stringify({
+        event: 'requestFailed',
+        path: new URL(request.url).pathname,
+        status: response.status,
+        code: error instanceof AppError ? error.code : 'internal',
+      }));
+      return response;
+    }
+  },
 } satisfies ExportedHandler<Env>;

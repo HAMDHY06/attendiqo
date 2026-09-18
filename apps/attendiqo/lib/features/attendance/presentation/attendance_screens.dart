@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../core/widgets/app_components.dart';
+import '../../../services/attendance_worker_service.dart';
 import '../../academic_management/application/academic_management_controller.dart';
 import '../application/attendance_management_controller.dart';
 
@@ -38,7 +39,25 @@ class _AttendanceManagementAreaState extends State<AttendanceManagementArea> {
       controller = widget.controller!;
       return;
     }
-    if (kDebugMode) {
+    const workerUrl = String.fromEnvironment(
+      'ATTENDANCE_WORKER_URL',
+      defaultValue: AttendiqoServiceEndpoints.workerBaseUrl,
+    );
+    if (workerUrl.isNotEmpty) {
+      final worker = AttendanceWorkerService(
+        students: widget.academicController.students,
+        endpoint: workerUrl,
+      );
+      controller = AttendanceManagementController(
+        actor: widget.academicController.actor,
+        classes: widget.academicController.classes,
+        students: widget.academicController.students,
+        assignments: widget.academicController.assignments,
+        scheduleChanges: widget.academicController.scheduleChanges,
+        qrAdministrationService: worker,
+        service: worker,
+      );
+    } else if (kDebugMode) {
       final qrAdmin = MockQrAdministrationService(
         classes: widget.academicController.classes,
         assignments: widget.academicController.assignments,
@@ -208,8 +227,8 @@ class AttendanceDashboardScreen extends StatelessWidget {
                 ? 'Trusted-write boundary active'
                 : 'Attendance backend not configured',
             message: controller.backendAvailable
-                ? 'This development build uses the local test service. Production writes still require the reviewed trusted backend.'
-                : 'Release attendance, QR and correction actions remain unavailable until the reviewed backend is deployed.',
+                ? 'Attendance, QR, correction and report actions use the protected Attendiqo service.'
+                : 'Attendance, QR and correction actions are unavailable until the protected service can be reached.',
           ),
         ],
       ),

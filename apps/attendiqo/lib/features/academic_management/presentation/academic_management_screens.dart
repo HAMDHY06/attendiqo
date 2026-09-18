@@ -535,7 +535,8 @@ class AcademicDashboardScreen extends StatelessWidget {
             actor.effectiveTeacherPermissions.canSendManualNotifications)
           FeatureActionCard(
             title: 'Manual notifications',
-            subtitle: 'Notification backend is not configured.',
+            subtitle:
+                'Push delivery is protected by the trusted Cloudflare Worker.',
             icon: Icons.notifications_active_outlined,
             badge: 'Not configured',
             onTap: () => _showNotConfigured(
@@ -1785,6 +1786,7 @@ class _CreateStudentScreenState extends State<CreateStudentScreen> {
   final secondMobile = TextEditingController();
   final email = TextEditingController();
   final address = TextEditingController();
+  String? targetClassId;
   @override
   void dispose() {
     for (final value in [
@@ -1817,6 +1819,29 @@ class _CreateStudentScreenState extends State<CreateStudentScreen> {
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 12),
+            if (widget.controller.isTeacher) ...[
+              DropdownButtonFormField<String>(
+                initialValue: targetClassId,
+                decoration: const InputDecoration(
+                  labelText: 'Assign to class',
+                  prefixIcon: Icon(Icons.class_outlined),
+                ),
+                items: widget.controller.classes
+                    .where((value) => value.active)
+                    .map(
+                      (value) => DropdownMenuItem(
+                        value: value.classId,
+                        child: Text('${value.classCode} • ${value.name}'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setState(() => targetClassId = value),
+                validator: (value) => value == null
+                    ? 'Select one of your assigned classes'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+            ],
             TextFormField(
               controller: number,
               textCapitalization: TextCapitalization.characters,
@@ -1922,6 +1947,7 @@ class _CreateStudentScreenState extends State<CreateStudentScreen> {
       secondaryParentMobile: secondMobile.text,
       parentEmail: email.text,
       address: address.text,
+      targetClassId: targetClassId,
     );
     if (!mounted) return;
     if (student != null) {

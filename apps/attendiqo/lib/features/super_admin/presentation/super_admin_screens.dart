@@ -1,9 +1,9 @@
 import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/widgets/app_components.dart';
+import '../../../services/account_provisioning_worker_service.dart';
 import '../../../services/sms_worker_client.dart';
 import '../../../theme/attendiqo_theme.dart';
 import '../../password_recovery/data/firebase_managed_password_reset_service.dart';
@@ -35,9 +35,7 @@ class _SuperAdminAreaState extends State<SuperAdminArea> {
         widget.controller ??
         SuperAdminController(
           repository: FirestoreInstituteRepository(),
-          provisioningService: kDebugMode
-              ? MockInstituteAdminProvisioningService()
-              : const UnavailableInstituteAdminProvisioningService(),
+          provisioningService: AccountProvisioningWorkerService(),
           passwordResetService: FirebaseManagedPasswordResetService(),
           actor: widget.authController.state.profile!,
         );
@@ -432,7 +430,20 @@ class _InstituteFormScreenState extends State<InstituteFormScreen> {
     }
     if (mounted) {
       setState(() => saving = false);
-      if (result != null) Navigator.pop(context, result);
+      if (result != null) {
+        Navigator.pop(context, result);
+      } else {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                widget.controller.error ??
+                    'Unable to save the institute. Please try again.',
+              ),
+            ),
+          );
+      }
     }
   }
 
@@ -732,7 +743,7 @@ class _PushSettingsScreenState extends State<PushSettingsScreen> {
       padding: const EdgeInsets.all(20),
       children: [
         const Text(
-          'This controls future push availability only. No FCM message is sent in this phase.',
+          'This controls FCM push availability for the institute. Delivery is handled by the trusted Cloudflare Worker.',
         ),
         SwitchListTile(
           title: const Text('Allow push notifications'),
@@ -1202,7 +1213,7 @@ class _CreateInstituteAdminScreenState
           ),
           const SizedBox(height: 18),
           const Text(
-            'A secure backend must create the real account. Development mode uses a local mock and sends nothing.',
+            'The protected account service creates the real account and shows its one-time temporary password only once.',
           ),
           const SizedBox(height: 18),
           FilledButton(

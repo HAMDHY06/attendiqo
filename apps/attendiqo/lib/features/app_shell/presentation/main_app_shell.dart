@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 
 import '../../../core/widgets/app_components.dart';
 import '../../../core/widgets/attendiqo_app_shell.dart';
+import '../../../services/account_provisioning_worker_service.dart';
 import '../../academic_management/application/academic_management_controller.dart';
 import '../../academic_management/data/firestore_academic_repository.dart';
 import '../../academic_management/presentation/academic_management_screens.dart';
 import '../../authentication/presentation/authentication_screens.dart';
+import '../../attendance/presentation/attendance_screens.dart';
 import '../../password_recovery/data/firebase_managed_password_reset_service.dart';
 import '../../super_admin/application/super_admin_controller.dart';
 import '../../super_admin/data/firestore_institute_repository.dart';
@@ -38,10 +40,12 @@ class _MainAppShellState extends State<MainAppShell> {
   SuperAdminController? _superAdmin;
   String? _instituteName;
   late final bool _firebaseReady;
+  final ValueNotifier<String?> _shellDestination = ValueNotifier(null);
 
   @override
   void initState() {
     super.initState();
+    widget.notificationDestination?.addListener(_forwardNotificationRoute);
     _firebaseReady = Firebase.apps.isNotEmpty;
     if (!_firebaseReady) return;
     final profile = widget.authController.state.profile;
@@ -57,9 +61,7 @@ class _MainAppShellState extends State<MainAppShell> {
       _teacherManagement = TeacherManagementController(
         actor: profile,
         repository: FirestoreTeacherRepository(),
-        provisioningService: kDebugMode
-            ? MockTeacherProvisioningService()
-            : const UnavailableTeacherProvisioningService(),
+        provisioningService: AccountProvisioningWorkerService(),
         passwordResetService: FirebaseManagedPasswordResetService(),
         verifiedSuperAdminClaim: profile.role == UserRole.superAdmin,
       )..load();
@@ -67,14 +69,22 @@ class _MainAppShellState extends State<MainAppShell> {
     if (profile.role == UserRole.superAdmin) {
       _superAdmin = SuperAdminController(
         repository: FirestoreInstituteRepository(),
-        provisioningService: kDebugMode
-            ? MockInstituteAdminProvisioningService()
-            : const UnavailableInstituteAdminProvisioningService(),
+        provisioningService: AccountProvisioningWorkerService(),
         passwordResetService: FirebaseManagedPasswordResetService(),
         actor: profile,
       )..load();
     }
     _resolveInstituteName(profile);
+  }
+
+  void _forwardNotificationRoute() {
+    _navigateTo(widget.notificationDestination?.value);
+  }
+
+  void _navigateTo(String? route) {
+    if (route == null) return;
+    _shellDestination.value = null;
+    _shellDestination.value = route;
   }
 
   Future<void> _resolveInstituteName(UserProfile profile) async {
@@ -91,6 +101,8 @@ class _MainAppShellState extends State<MainAppShell> {
 
   @override
   void dispose() {
+    widget.notificationDestination?.removeListener(_forwardNotificationRoute);
+    _shellDestination.dispose();
     _academic?.dispose();
     _teacherManagement?.dispose();
     _superAdmin?.dispose();
@@ -120,7 +132,7 @@ class _MainAppShellState extends State<MainAppShell> {
           ),
         ],
         onSignOut: widget.authController.signOut,
-        notificationDestination: widget.notificationDestination,
+        notificationDestination: _shellDestination,
       );
     }
     final instituteName = _instituteName ?? 'Institute information';
@@ -136,7 +148,7 @@ class _MainAppShellState extends State<MainAppShell> {
       instituteName: profile.role == UserRole.superAdmin ? null : instituteName,
       destinations: destinations,
       onSignOut: widget.authController.signOut,
-      notificationDestination: widget.notificationDestination,
+      notificationDestination: _shellDestination,
     );
   }
 
@@ -156,6 +168,7 @@ class _MainAppShellState extends State<MainAppShell> {
           instituteName: instituteName,
           academic: academic,
           teachers: teachers,
+          onNavigate: _navigateTo,
         ),
       ),
       _destination(
@@ -183,12 +196,7 @@ class _MainAppShellState extends State<MainAppShell> {
         'Attendance',
         Icons.fact_check_outlined,
         Icons.fact_check,
-        const _UnavailableTabs(
-          labels: ['Live', 'Sessions', 'Corrections'],
-          title: 'Attendance backend not deployed',
-          message:
-              'Scanner, sessions and corrections remain behind the reviewed trusted backend.',
-        ),
+        AttendanceManagementArea(academicController: academic),
       ),
       _destination(
         'More',
@@ -216,6 +224,7 @@ class _MainAppShellState extends State<MainAppShell> {
             'System': ['Account', 'Security', 'Help and support'],
           },
           onSignOut: widget.authController.signOut,
+          onSettings: () => Navigator.of(context).pushNamed('/settings'),
         ),
       ),
     ];
@@ -236,6 +245,7 @@ class _MainAppShellState extends State<MainAppShell> {
           profile: profile,
           instituteName: instituteName,
           academic: academic,
+          onNavigate: _navigateTo,
         ),
       ),
       _destination(
@@ -248,22 +258,23 @@ class _MainAppShellState extends State<MainAppShell> {
         'Attendance',
         Icons.fact_check_outlined,
         Icons.fact_check,
-        const _UnavailableTabs(
-          labels: ['Live', 'Sessions', 'Corrections'],
-          title: 'Attendance backend not deployed',
-          message: 'Only the approved trusted backend can persist attendance.',
-        ),
+        AttendanceManagementArea(academicController: academic),
       ),
       if (permissions.canAddStudents || permissions.canEditStudents)
         _destination(
           'Students',
           Icons.people_outline,
           Icons.people,
-          const _BoundaryPanel(
-            title: 'Student records are not configured',
-            message:
-                'A redacted trusted projection is required before teacher student or parent-contact data can be read safely.',
-          ),
+          permissions.canViewParentContacts
+              ? RefreshIndicator(
+                  onRefresh: academic.load,
+                  child: StudentListScreen(controller: academic),
+                )
+              : const _BoundaryPanel(
+                  title: 'Parent-contact permission required',
+                  message:
+                      'Student editing includes guardian details. Ask the Institute Admin to enable View Parent Contacts with the student permission.',
+                ),
         ),
       _destination(
         'Profile',
@@ -301,7 +312,7 @@ class _MainAppShellState extends State<MainAppShell> {
         const _BoundaryPanel(
           title: 'Operational monitoring',
           message:
-              'The trusted backend, notification and SMS services are not deployed. Rules and indexes require human review before deployment.',
+              'Protected membership, QR, attendance, parent projections, push delivery and optional SMS services are online.',
         ),
       ),
       _destination(
@@ -325,6 +336,7 @@ class _MainAppShellState extends State<MainAppShell> {
             'Support': ['Security review', 'Help and support'],
           },
           onSignOut: widget.authController.signOut,
+          onSettings: () => Navigator.of(context).pushNamed('/settings'),
         ),
       ),
     ];
@@ -374,11 +386,13 @@ class _AdminHome extends StatelessWidget {
     required this.instituteName,
     required this.academic,
     required this.teachers,
+    required this.onNavigate,
   });
   final UserProfile profile;
   final String instituteName;
   final AcademicManagementController academic;
   final TeacherManagementController teachers;
+  final void Function(String route) onNavigate;
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: Listenable.merge([academic, teachers]),
@@ -430,7 +444,7 @@ class _AdminHome extends StatelessWidget {
             _Action(
               'Start Attendance',
               Icons.qr_code_scanner_outlined,
-              () => _notConfigured(context),
+              () => onNavigate('attendance'),
             ),
           ],
         ),
@@ -463,9 +477,9 @@ class _AdminHome extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         const ActionRequiredCard(
-          title: 'Trusted backend pending',
+          title: 'Attendance is ready',
           message:
-              'QR scanning, attendance sessions and corrections remain unavailable until the reviewed backend is deployed.',
+              'Open Attendance to create a protected class session, scan student QR cards, or record a correction.',
         ),
       ],
     ),
@@ -477,10 +491,12 @@ class _TeacherHome extends StatelessWidget {
     required this.profile,
     required this.instituteName,
     required this.academic,
+    required this.onNavigate,
   });
   final UserProfile profile;
   final String instituteName;
   final AcademicManagementController academic;
+  final void Function(String route) onNavigate;
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: academic,
@@ -527,35 +543,29 @@ class _TeacherHome extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (permissions.canAddStudents)
-                _Action(
-                  'Add Student',
-                  Icons.person_add_alt_1_outlined,
-                  () => _notConfigured(context),
-                ),
               if (permissions.canGenerateQrCodes)
                 _Action(
                   'Generate QR',
                   Icons.qr_code_2,
-                  () => _notConfigured(context),
+                  () => onNavigate('attendance'),
                 ),
               if (permissions.canTakeAttendance)
                 _Action(
                   'Start Attendance',
                   Icons.qr_code_scanner_outlined,
-                  () => _notConfigured(context),
+                  () => onNavigate('attendance'),
                 ),
               if (permissions.canCorrectAttendance)
                 _Action(
                   'Correct Attendance',
                   Icons.edit_calendar_outlined,
-                  () => _notConfigured(context),
+                  () => onNavigate('attendance'),
                 ),
               if (permissions.canExportReports)
                 _Action(
                   'Export Report',
                   Icons.ios_share_outlined,
-                  () => _notConfigured(context),
+                  () => onNavigate('attendance'),
                 ),
             ],
           ),
@@ -826,25 +836,6 @@ class _TeacherList extends StatelessWidget {
   );
 }
 
-class _UnavailableTabs extends StatelessWidget {
-  const _UnavailableTabs({
-    required this.labels,
-    required this.title,
-    required this.message,
-  });
-  final List<String> labels;
-  final String title;
-  final String message;
-  @override
-  Widget build(BuildContext context) => _TabbedBody(
-    labels: labels,
-    pages: List.generate(
-      labels.length,
-      (_) => _BoundaryPanel(title: title, message: message),
-    ),
-  );
-}
-
 class _BoundaryPanel extends StatelessWidget {
   const _BoundaryPanel({required this.title, required this.message});
   final String title;
@@ -966,7 +957,7 @@ class _SuperOverview extends StatelessWidget {
           const ActionRequiredCard(
             title: 'Platform attention',
             message:
-                'Production QR/attendance, notifications and SMS remain intentionally unconfigured.',
+                'Protected membership, QR and attendance are online. SMS remains optional and disabled until an institute enables it.',
           ),
         ],
       );
@@ -1018,6 +1009,23 @@ class _InstituteList extends StatelessWidget {
                     ),
                   )
                   .toList(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              key: const Key('createInstituteButton'),
+              onPressed: () async {
+                await Navigator.push<Institute>(
+                  context,
+                  MaterialPageRoute<Institute>(
+                    builder: (_) => InstituteFormScreen(controller: controller),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.add_business_rounded),
+              label: const Text('Create institute'),
             ),
           ),
           const SizedBox(height: 12),
@@ -1106,10 +1114,12 @@ class _MoreBody extends StatelessWidget {
     required this.title,
     required this.groups,
     required this.onSignOut,
+    required this.onSettings,
   });
   final String title;
   final Map<String, List<String>> groups;
   final Future<void> Function() onSignOut;
+  final VoidCallback onSettings;
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(16),
@@ -1130,9 +1140,33 @@ class _MoreBody extends StatelessWidget {
               children: entry.value
                   .map(
                     (label) => ListTile(
+                      leading: Icon(
+                        label.contains('Notification') ||
+                                label == 'Account' ||
+                                label == 'Security'
+                            ? Icons.settings_outlined
+                            : Icons.info_outline,
+                      ),
                       title: Text(label),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _notConfigured(context),
+                      subtitle: Text(
+                        label.contains('Notification') ||
+                                label == 'Account' ||
+                                label == 'Security'
+                            ? 'Open app and notification settings.'
+                            : 'Managed from the related primary section.',
+                      ),
+                      trailing:
+                          label.contains('Notification') ||
+                              label == 'Account' ||
+                              label == 'Security'
+                          ? const Icon(Icons.chevron_right)
+                          : null,
+                      onTap:
+                          label.contains('Notification') ||
+                              label == 'Account' ||
+                              label == 'Security'
+                          ? onSettings
+                          : null,
                     ),
                   )
                   .toList(),
@@ -1207,13 +1241,3 @@ class _Actions extends StatelessWidget {
     ),
   );
 }
-
-void _notConfigured(
-  BuildContext context,
-) => ScaffoldMessenger.of(context).showSnackBar(
-  const SnackBar(
-    content: Text(
-      'This action needs the reviewed trusted backend and is not configured yet.',
-    ),
-  ),
-);

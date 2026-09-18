@@ -14,7 +14,7 @@ function decodeJson(value: string): Record<string, unknown> { try { return JSON.
 export type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 /** Verifies Firebase tokens against Google's published Secure Token JWKS. */
-export async function verifyFirebaseToken(token: string, projectId: string, requestFetch: Fetcher = fetch): Promise<{ uid: string; superAdmin: boolean }> {
+export async function verifyFirebaseToken(token: string, projectId: string, requestFetch: Fetcher = fetch): Promise<{ uid: string; email?: string; superAdmin: boolean }> {
   const parts = token.split('.'); if (parts.length !== 3) throw new AppError(401, 'invalid_token', 'Authentication could not be verified.');
   const header = decodeJson(parts[0]); const claims = decodeJson(parts[1]);
   if (header.alg !== 'RS256' || typeof header.kid !== 'string' || claims.aud !== projectId || claims.iss !== `https://securetoken.google.com/${projectId}` || typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 128) throw new AppError(401, 'invalid_token', 'Authentication could not be verified.');
@@ -24,7 +24,8 @@ export async function verifyFirebaseToken(token: string, projectId: string, requ
   if (!jwk) throw new AppError(401, 'invalid_token', 'Authentication could not be verified.');
   const key = await crypto.subtle.importKey('jwk', jwk as unknown as JsonWebKey, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']).catch(() => { throw new AppError(503, 'identity_unavailable', 'Authentication verification is unavailable.'); });
   const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, base64UrlDecode(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
-  if (!valid) throw new AppError(401, 'invalid_token', 'Authentication could not be verified.'); return { uid: claims.sub, superAdmin: claims.superAdmin === true };
+  if (!valid) throw new AppError(401, 'invalid_token', 'Authentication could not be verified.');
+  return { uid: claims.sub, email: typeof claims.email === 'string' ? claims.email : undefined, superAdmin: claims.superAdmin === true };
 }
 
 function firestoreValue(value: unknown): unknown {

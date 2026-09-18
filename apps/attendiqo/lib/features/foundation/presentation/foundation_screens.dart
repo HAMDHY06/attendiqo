@@ -11,7 +11,8 @@ class SplashScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
       child: Center(
-        child: Padding(
+        child: SingleChildScrollView(
+          child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -36,10 +37,29 @@ class SplashScreen extends StatelessWidget {
               const CircularProgressIndicator(),
               const SizedBox(height: 16),
               Text(message, textAlign: TextAlign.center),
+              const SizedBox(height: 22),
+              const _CloudflareProtectedBadge(),
             ],
+          ),
           ),
         ),
       ),
+    ),
+  );
+}
+
+class _CloudflareProtectedBadge extends StatelessWidget {
+  const _CloudflareProtectedBadge();
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Cloudflare protected connection',
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(color: const Color(0xFFFFF1E6), borderRadius: BorderRadius.circular(20)),
+      child: const Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, runSpacing: 4, children: [
+        Icon(Icons.cloud_rounded, color: Color(0xFFF48120), size: 21),
+        Text('Cloudflare protected', style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF7A3E00))),
+      ]),
     ),
   );
 }

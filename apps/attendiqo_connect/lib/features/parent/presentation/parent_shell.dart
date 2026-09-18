@@ -2,6 +2,7 @@ import 'package:attendiqo_shared/attendiqo_shared.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../../services/firebase_authentication_repository.dart';
 import '../application/parent_data_controller.dart';
 import '../data/parent_projection_repository.dart';
 import '../domain/parent_data.dart';
@@ -12,10 +13,12 @@ class ParentShell extends StatefulWidget {
     required this.controller,
     required this.repository,
     this.notificationDestination,
+    this.accountWorkflow,
   });
   final AuthenticationController controller;
   final ParentProjectionRepository repository;
   final ValueListenable<String?>? notificationDestination;
+  final ParentAccountWorkflowRepository? accountWorkflow;
 
   @override
   State<ParentShell> createState() => _ParentShellState();
@@ -60,6 +63,11 @@ class _ParentShellState extends State<ParentShell> {
     await widget.controller.signOut();
   }
 
+  Future<void> _linkStudent(String studentNumber) async {
+    await widget.accountWorkflow!.linkStudent(studentNumber);
+    _dataController.retryLinks();
+  }
+
   @override
   void dispose() {
     widget.notificationDestination?.removeListener(
@@ -74,7 +82,10 @@ class _ParentShellState extends State<ParentShell> {
     final profile = widget.controller.state.profile!;
     final pages = <Widget>[
       ParentHomePage(controller: _dataController, onNavigate: _select),
-      ChildrenPage(controller: _dataController),
+      ChildrenPage(
+        controller: _dataController,
+        onLinkStudent: widget.accountWorkflow == null ? null : _linkStudent,
+      ),
       AttendancePage(controller: _dataController),
       NoticesPage(controller: _dataController),
       ProfilePage(
@@ -332,8 +343,13 @@ class ChildSelector extends StatelessWidget {
 }
 
 class ChildrenPage extends StatelessWidget {
-  const ChildrenPage({super.key, required this.controller});
+  const ChildrenPage({
+    super.key,
+    required this.controller,
+    this.onLinkStudent,
+  });
   final ParentDataController controller;
+  final Future<void> Function(String studentNumber)? onLinkStudent;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -344,6 +360,18 @@ class ChildrenPage extends StatelessWidget {
         key: const PageStorageKey('children-page'),
         padding: const EdgeInsets.all(16),
         children: [
+          if (onLinkStudent != null) ...[
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                key: const Key('linkChildButton'),
+                onPressed: () => _showLinkChildDialog(context),
+                icon: const Icon(Icons.person_add_alt_1_outlined),
+                label: const Text('Link child'),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           ChildSelector(controller: controller),
           const SizedBox(height: 16),
           for (final child
@@ -372,6 +400,94 @@ class ChildrenPage extends StatelessWidget {
       ),
     ),
   );
+
+  Future<void> _showLinkChildDialog(BuildContext context) async {
+    final formKey = GlobalKey<FormState>();
+    final studentNumber = TextEditingController();
+    String? error;
+    var loading = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Link a child'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Enter the student number issued by your institute. Your registered mobile number must match the student record.',
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  key: const Key('linkStudentNumberField'),
+                  controller: studentNumber,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(labelText: 'Student number'),
+                  validator: (value) => FieldValidators.required(
+                    value,
+                    label: 'Student number',
+                  ),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    error!,
+                    key: const Key('linkStudentError'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: loading ? null : () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('confirmLinkChildButton'),
+              onPressed: loading
+                  ? null
+                  : () async {
+                      if (!formKey.currentState!.validate()) return;
+                      setDialogState(() {
+                        loading = true;
+                        error = null;
+                      });
+                      try {
+                        await onLinkStudent!(studentNumber.text);
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Child linked securely.'),
+                            ),
+                          );
+                        }
+                      } on AuthFailure catch (failure) {
+                        setDialogState(() {
+                          loading = false;
+                          error = failure.userMessage;
+                        });
+                      } catch (_) {
+                        setDialogState(() {
+                          loading = false;
+                          error = 'Unable to link this child. Try again.';
+                        });
+                      }
+                    },
+              child: Text(loading ? 'Linking...' : 'Link child'),
+            ),
+          ],
+        ),
+      ),
+    );
+    studentNumber.dispose();
+  }
 }
 
 class AttendancePage extends StatelessWidget {

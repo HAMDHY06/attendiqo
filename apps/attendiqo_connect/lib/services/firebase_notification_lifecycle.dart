@@ -1,18 +1,26 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:attendiqo_shared/attendiqo_shared.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart' as permissions;
 
 /// Callable-only device lifecycle. Safe failures leave Connect usable.
 class FirebaseNotificationLifecycle implements AppNotificationLifecycle {
   FirebaseNotificationLifecycle({
     FirebaseMessaging? messaging,
-    FirebaseFunctions? functions,
+    FirebaseAuth? auth,
+    http.Client? client,
+    String? endpoint,
   }) : _messaging = messaging ?? FirebaseMessaging.instance,
-       _functions = functions ?? FirebaseFunctions.instance;
+       _auth = auth ?? FirebaseAuth.instance,
+       _client = client ?? http.Client(),
+       _endpoint = (endpoint ?? AttendiqoServiceEndpoints.workerBaseUrl).replaceAll(RegExp(r'/+$'), '');
   final FirebaseMessaging _messaging;
-  final FirebaseFunctions _functions;
+  final FirebaseAuth _auth;
+  final http.Client _client;
+  final String _endpoint;
   final _permissions =
       StreamController<NotificationPermissionState>.broadcast();
   final _taps = StreamController<NotificationTapRoute>.broadcast();
@@ -74,9 +82,7 @@ class FirebaseNotificationLifecycle implements AppNotificationLifecycle {
   }
 
   Future<void> _register(String token) async {
-    final result = await _functions
-        .httpsCallable('registerNotificationDevice')
-        .call({
+    final result = await _post('/v1/notifications/register', {
           'token': token,
           'appPackage': 'com.hamdhytech.attendiqo.connect',
           'platform': 'android',
@@ -87,14 +93,12 @@ class FirebaseNotificationLifecycle implements AppNotificationLifecycle {
           ),
           'permissionStatus': 'granted',
         });
-    _tokenId = result.data is Map ? result.data['tokenId'] as String? : null;
+    _tokenId = result['tokenId'] as String?;
   }
 
   Future<void> _refresh(String token) async {
     if (_tokenId == null) return _register(token);
-    final result = await _functions
-        .httpsCallable('refreshNotificationDevice')
-        .call({
+    final result = await _post('/v1/notifications/refresh', {
           'oldTokenId': _tokenId,
           'token': token,
           'appPackage': 'com.hamdhytech.attendiqo.connect',
@@ -106,17 +110,17 @@ class FirebaseNotificationLifecycle implements AppNotificationLifecycle {
           ),
           'permissionStatus': 'granted',
         });
-    _tokenId = result.data is Map ? result.data['tokenId'] as String? : null;
+    _tokenId = result['tokenId'] as String?;
   }
 
   @override
   Future<void> clearForSignOut() async {
     if (_tokenId != null) {
       try {
-        await _functions.httpsCallable('deactivateNotificationDevice').call({
+        await _post('/v1/notifications/deactivate', {
           'tokenId': _tokenId,
         });
-      } on FirebaseFunctionsException {
+      } catch (_) {
         /* A network failure must not block local sign-out. */
       }
     }
@@ -127,6 +131,20 @@ class FirebaseNotificationLifecycle implements AppNotificationLifecycle {
     _foregroundSub = null;
     _tokenSub = null;
     _tokenId = null;
+  }
+
+  Future<Map<String, dynamic>> _post(String path, Map<String, Object?> data) async {
+    final token = await _auth.currentUser?.getIdToken();
+    if (token == null || token.isEmpty) throw StateError('Sign in to register notifications.');
+    final response = await _client.post(Uri.parse('$_endpoint$path'), headers: {
+      'authorization': 'Bearer $token',
+      'content-type': 'application/json',
+    }, body: jsonEncode(data));
+    final value = jsonDecode(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300 || value is! Map<String, dynamic>) {
+      throw StateError('Notification service unavailable.');
+    }
+    return value;
   }
 
   Future<void> dispose() async {
